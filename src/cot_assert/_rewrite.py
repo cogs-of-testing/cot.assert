@@ -13,7 +13,7 @@ import ast
 import copy
 import sys
 
-from ._unparse import unparse
+from ._unparse import binop, cmpop, unaryop, unparse
 
 PY2 = sys.version_info[0] == 2
 
@@ -74,6 +74,11 @@ def _const(value):
     if isinstance(value, (int, float)):
         return ast.Num(value)
     return ast.Str(value)
+
+
+def _literal(value):
+    """AST for nested tuples and lists of str, int, bool and None."""
+    return ast.parse(repr(value), mode="eval").body
 
 
 def _name(id_, store=False):
@@ -177,15 +182,16 @@ class ModuleRewriter(object):
         stmts = [
             ast.ImportFrom("cot_assert", [ast.alias("_runtime", RUNTIME)], 0),
         ]
-        for name, source, path_labels in self.sites:
-            labels = ast.List(
+        for name, source, path_labels, shape, paths in self.sites:
+            site = _call(
+                _attr(_name(RUNTIME), "AssertSite"),
                 [
-                    ast.List([_const(label) for label in path], ast.Load())
-                    for path in path_labels
+                    _const(source),
+                    _literal(path_labels),
+                    _literal(shape),
+                    _literal(paths),
                 ],
-                ast.Load(),
             )
-            site = _call(_attr(_name(RUNTIME), "AssertSite"), [_const(source), labels])
             stmts.append(ast.Assign([_name(name, store=True)], site))
         for stmt in stmts:
             stmt.lineno = 1
@@ -250,138 +256,236 @@ def _docstring_node(body):
 
 
 class AssertRewriter(object):
-    """Rewrites a single assert statement."""
+    """Rewrites a single assert statement.
+
+    Besides the code, it records what the failure explanation needs:
+
+    - slots: every tracked value gets a slot number and a label;
+    - paths: per failure exit, the slots evaluated on the way there (in the
+      order their values are passed) and the marks that tell which boolean
+      operands ran and which comparisons are known to have failed;
+    - shape: a tree of tuples mirroring the expression, which the host
+      renders the way pytest's rewriter formats its explanations.
+    """
 
     def __init__(self, module, local_names):
         self.module = module
         self.local_names = local_names
-        self.path_labels = []
         self.site_name = module.fresh("cot_site")
+        self.labels = []
+        self.paths = []
+        self.node_ids = 0
 
     def rewrite(self, stmt):
         self.msg = stmt.msg
         block = []
-        self.check(stmt.test, block, [])
-        self.module.sites.append((self.site_name, unparse(stmt.test), self.path_labels))
+        shape = self.check(stmt.test, block, _Path())
+        path_labels = [[self.labels[slot] for slot in slots] for slots, _ in self.paths]
+        self.module.sites.append(
+            (self.site_name, unparse(stmt.test), path_labels, shape, self.paths)
+        )
         for new in block:
             ast.copy_location(new, stmt)
         return block
 
+    def new_id(self):
+        self.node_ids += 1
+        return self.node_ids
+
     # -- failure exits --
 
-    def fail(self, evaluated):
-        path = len(self.path_labels)
-        self.path_labels.append([label for _, label in evaluated])
+    def fail(self, path):
+        number = len(self.paths)
+        self.paths.append((list(path.slots), sorted(path.marks)))
         values = ast.List(
-            [_call(_attr(_name(RUNTIME), "v"), [expr]) for expr, _ in evaluated],
+            [_call(_attr(_name(RUNTIME), "v"), [expr]) for expr in path.exprs],
             ast.Load(),
         )
         msg = copy.deepcopy(self.msg) if self.msg is not None else _const(None)
         return _raise(
             _call(
                 _attr(_name(RUNTIME), "fail"),
-                [_name(self.site_name), _const(path), values, msg],
+                [_name(self.site_name), _const(number), values, msg],
             )
         )
 
-    def fail_unless(self, test, block, evaluated):
-        block.append(ast.If(_not(test), [self.fail(evaluated)], []))
+    def fail_unless(self, test, block, path):
+        block.append(ast.If(_not(test), [self.fail(path)], []))
 
     # -- statement level: fall through when true, raise when false --
 
-    def check(self, expr, block, evaluated):
-        if isinstance(expr, ast.BoolOp) and isinstance(expr.op, ast.And):
-            for value in expr.values:
-                self.check(value, block, evaluated)
-        elif isinstance(expr, ast.BoolOp):
-            for value in expr.values[:-1]:
-                test = self.cond(value, block, evaluated)
-                inner = []
-                block.append(ast.If(_not(test), inner, []))
-                block = inner
-            self.check(expr.values[-1], block, evaluated)
-        elif isinstance(expr, ast.Compare) and len(expr.ops) > 1:
-            left = self.track(expr.left, block, evaluated)
-            for op, comparator in zip(expr.ops, expr.comparators):
-                right = self.track(comparator, block, evaluated)
-                self.fail_unless(ast.Compare(left, [op], [right]), block, evaluated)
+    def check(self, expr, block, path):
+        """Emit the test for ``expr`` into ``block``; return its shape."""
+        if isinstance(expr, ast.BoolOp):
+            node = self.new_id()
+            is_or = isinstance(expr.op, ast.Or)
+            shapes = []
+            last = len(expr.values) - 1
+            for i, value in enumerate(expr.values):
+                path.marks.add(("bool", node, i))
+                if is_or and i < last:
+                    # a false operand of ``or`` moves on to the next one
+                    test, shape = self.cond(value, block, path)
+                    inner = []
+                    block.append(ast.If(_not(test), inner, []))
+                    block = inner
+                    shapes.append(shape)
+                    self.mark_false(shape, path)
+                else:
+                    shapes.append(self.check(value, block, path))
+            return ("boolop", node, is_or, shapes)
+        if isinstance(expr, ast.Compare) and len(expr.ops) > 1:
+            node = self.new_id()
+            left, left_shape = self.track(expr.left, block, path)
+            operands = [left_shape]
+            for i, (op, comparator) in enumerate(zip(expr.ops, expr.comparators)):
+                right, right_shape = self.track(comparator, block, path)
+                operands.append(right_shape)
+                test = ast.Compare(left, [op], [right])
+                path.marks.add(("cmp", node, i))
+                block.append(ast.If(_not(test), [self.fail(path)], []))
+                path.marks.discard(("cmp", node, i))
                 left = right
-        else:
-            self.fail_unless(self.cond(expr, block, evaluated), block, evaluated)
+            return ("compare", node, [cmpop(op) for op in expr.ops], operands, None)
+        test, shape = self.cond(expr, block, path)
+        self.mark_false(shape, path)
+        self.fail_unless(test, block, path)
+        self.unmark_false(shape, path)
+        return shape
 
-    def cond(self, expr, block, evaluated):
+    def mark_false(self, shape, path):
+        if shape[0] == "compare" and shape[4] is None:
+            path.marks.add(("cmp", shape[1], 0))
+
+    def unmark_false(self, shape, path):
+        if shape[0] == "compare" and shape[4] is None:
+            path.marks.discard(("cmp", shape[1], 0))
+
+    def cond(self, expr, block, path):
         """An expression to test, its operands already evaluated into block."""
         if isinstance(expr, ast.Compare) and len(expr.ops) == 1:
-            left = self.track(expr.left, block, evaluated)
-            right = self.track(expr.comparators[0], block, evaluated)
-            return ast.Compare(left, expr.ops, [right])
-        return self.track(expr, block, evaluated)
+            left, left_shape = self.track(expr.left, block, path)
+            right, right_shape = self.track(expr.comparators[0], block, path)
+            shape = (
+                "compare",
+                self.new_id(),
+                [cmpop(expr.ops[0])],
+                [left_shape, right_shape],
+                None,
+            )
+            return ast.Compare(left, expr.ops, [right]), shape
+        return self.track(expr, block, path)
 
     # -- expression level: evaluate once, remember the value --
 
-    def track(self, expr, block, evaluated):
-        """Evaluate ``expr`` into ``block``; return an expression for its value."""
+    def slot(self, expr, label, path):
+        slot = len(self.labels)
+        self.labels.append(label)
+        path.slots.append(slot)
+        path.exprs.append(expr)
+        return slot
+
+    def track(self, expr, block, path):
+        """Evaluate ``expr`` into ``block``; return (value expression, shape)."""
         if _is_constant(expr):
-            return expr
+            return expr, ("const", unparse(expr))
         label = unparse(expr)
         if isinstance(expr, ast.Name):
             if self.local_names is None or expr.id in self.local_names:
-                evaluated.append((_name(expr.id), label))
-            return expr
-        new = self.rebuild(expr, block, evaluated)
+                return expr, ("name", self.slot(_name(expr.id), label, path), expr.id)
+            return expr, ("text", expr.id)
+        new, build = self.rebuild(expr, block, path)
         temp = self.module.fresh("cot")
         block.append(ast.Assign([_name(temp, store=True)], new))
-        evaluated.append((_name(temp), label))
-        return _name(temp)
+        slot = self.slot(_name(temp), label, path)
+        return _name(temp), build(slot)
 
-    def rebuild(self, expr, block, evaluated):
-        """``expr`` with its sub-expressions replaced by tracked values."""
-        if isinstance(expr, ast.Attribute):
-            return _attr(self.track(expr.value, block, evaluated), expr.attr)
+    def rebuild(self, expr, block, path):
+        """``expr`` over tracked sub-values, and a shape builder taking its slot."""
+        if isinstance(expr, ast.Attribute) and isinstance(expr.ctx, ast.Load):
+            value, value_shape = self.track(expr.value, block, path)
+            attr = expr.attr
+            return _attr(value, attr), lambda slot: ("attr", slot, value_shape, attr)
         if isinstance(expr, ast.BinOp):
-            left = self.track(expr.left, block, evaluated)
-            right = self.track(expr.right, block, evaluated)
-            return ast.BinOp(left, expr.op, right)
+            left, left_shape = self.track(expr.left, block, path)
+            right, right_shape = self.track(expr.right, block, path)
+            sym = binop(expr.op)
+            return (
+                ast.BinOp(left, expr.op, right),
+                lambda slot: ("binop", sym, left_shape, right_shape),
+            )
         if isinstance(expr, ast.UnaryOp):
-            return ast.UnaryOp(expr.op, self.track(expr.operand, block, evaluated))
+            operand, operand_shape = self.track(expr.operand, block, path)
+            pattern = unaryop(expr.op) + "%s"
+            return (
+                ast.UnaryOp(expr.op, operand),
+                lambda slot: ("unary", pattern, operand_shape),
+            )
         if isinstance(expr, ast.Compare) and len(expr.ops) == 1:
-            return self.cond(expr, block, evaluated)
-        if isinstance(expr, ast.Subscript) and isinstance(expr.ctx, ast.Load):
-            value = self.track(expr.value, block, evaluated)
-            return ast.Subscript(value, expr.slice, ast.Load())
+            test, shape = self.cond(expr, block, path)
+            return test, lambda slot: shape[:4] + (slot,)
         if isinstance(expr, ast.Call):
-            return self.rebuild_call(expr, block, evaluated)
-        return expr
+            return self.rebuild_call(expr, block, path)
+        if isinstance(expr, ast.Subscript) and isinstance(expr.ctx, ast.Load):
+            value, _ = self.track(expr.value, block, path)
+            return ast.Subscript(value, expr.slice, ast.Load()), _repr_shape
+        return expr, _repr_shape
 
-    def rebuild_call(self, call, block, evaluated):
+    def rebuild_call(self, call, block, path):
         func = call.func
         if isinstance(func, ast.Attribute):
             # keep the method call shape: a bound method in a temporary is
             # something RPython would have to annotate as a value
-            func = _attr(self.track(func.value, block, evaluated), func.attr)
-        elif not isinstance(func, ast.Name):
-            func = self.track(func, block, evaluated)
+            obj, obj_shape = self.track(func.value, block, path)
+            func_shape = ("method", obj_shape, func.attr)
+            func = _attr(obj, func.attr)
+        else:
+            func, func_shape = self.track(func, block, path)
         args = []
+        arg_shapes = []
         for arg in call.args:
             if not PY2 and isinstance(arg, ast.Starred):
-                args.append(
-                    ast.Starred(self.track(arg.value, block, evaluated), ast.Load())
-                )
+                value, shape = self.track(arg.value, block, path)
+                args.append(ast.Starred(value, ast.Load()))
+                arg_shapes.append(("*", shape))
             else:
-                args.append(self.track(arg, block, evaluated))
-        keywords = [
-            ast.keyword(kw.arg, self.track(kw.value, block, evaluated))
-            for kw in call.keywords
-        ]
+                value, shape = self.track(arg, block, path)
+                args.append(value)
+                arg_shapes.append(("", shape))
+        starargs = kwargs = None
+        if PY2 and call.starargs is not None:
+            starargs, shape = self.track(call.starargs, block, path)
+            arg_shapes.append(("*", shape))
+        keywords = []
+        for kw in call.keywords:
+            value, shape = self.track(kw.value, block, path)
+            keywords.append(ast.keyword(kw.arg, value))
+            arg_shapes.append(("**" if kw.arg is None else kw.arg + "=", shape))
+        if PY2 and call.kwargs is not None:
+            kwargs, shape = self.track(call.kwargs, block, path)
+            arg_shapes.append(("**", shape))
         if PY2:
-            starargs = call.starargs
-            if starargs is not None:
-                starargs = self.track(starargs, block, evaluated)
-            kwargs = call.kwargs
-            if kwargs is not None:
-                kwargs = self.track(kwargs, block, evaluated)
-            return ast.Call(func, args, keywords, starargs, kwargs)
-        return ast.Call(func, args, keywords)
+            new = ast.Call(func, args, keywords, starargs, kwargs)
+        else:
+            new = ast.Call(func, args, keywords)
+        return new, lambda slot: ("call", slot, func_shape, arg_shapes)
+
+
+def _repr_shape(slot):
+    return ("repr", slot)
+
+
+class _Path(object):
+    """What has been evaluated along the code path being emitted.
+
+    Failure exits only ever come after the code of everything they report,
+    and short-circuits only nest, so one growing record per assert is enough.
+    """
+
+    def __init__(self):
+        self.slots = []
+        self.exprs = []
+        self.marks = set()
 
 
 def load_source(source, name="rewritten"):
