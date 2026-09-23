@@ -7,6 +7,9 @@ from ._error import AnnotatedAssertion, AssertSite, annotated
 from ._hook import install, uninstall
 from ._rewrite import rewrite_asserts, rewrite_source
 
+# the public name, in tracebacks and pickles
+AnnotatedAssertion.__module__ = __name__
+
 __all__ = [
     "AnnotatedAssertion",
     "AssertSite",
