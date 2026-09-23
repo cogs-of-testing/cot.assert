@@ -6,6 +6,11 @@ repos:
       args: [ --fix ]
     - id: ruff-format
 
+- repo: https://github.com/woodruffw/zizmor-pre-commit
+  rev: v1.28.0
+  hooks:
+    - id: zizmor
+
 - repo: https://github.com/tox-dev/pyproject-fmt
   rev: "v2.26.0"
   hooks:

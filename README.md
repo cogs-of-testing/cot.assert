@@ -4,7 +4,14 @@ Assertion rewriting that raises a structured `AnnotatedAssertion`, for Python
 2.7, Python 3.9+ and RPython. Intended as a drop-in replacement for pytest's
 assertion rewriting on current pytest and on pytest 4.6.
 
-Pre-alpha; nothing is published yet.
+Pre-alpha.
+
+```
+pip install cot-assert
+```
+
+One universal wheel serves Python 2.7 (pip 20 and later, CPython or PyPy)
+and Python 3.9 and later. It has no dependencies.
 
 ## With pytest
 
