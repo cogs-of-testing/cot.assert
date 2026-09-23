@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv
+/site
+# container-side virtualenvs and pip caches from testing/containers.sh
+/.containers/
+.claude/settings.local.json
