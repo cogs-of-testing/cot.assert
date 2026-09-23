@@ -32,6 +32,8 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = []
+# inactive until enabled with --cot-assert or the cot_assert ini option
+entry-points.pytest11.cot_assert = "cot_assert.pytest_plugin"
 
 [dependency-groups]
 test = [
