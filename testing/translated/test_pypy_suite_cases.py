@@ -1,18 +1,19 @@
-"""Assert shapes from PyPy's rpython suite that rewritten code cannot translate yet.
+"""Assert shapes from PyPy's rpython suite that broke rewritten code.
 
-Each case is the smallest function found that breaks a test in PyPy's rpython
-suite once cot-assert rewrites it; the same source translates with plain
-asserts. They are strict xfails: a fix turns them into failures that ask for
-the marker to go.
+Each case is the smallest function found that broke a test in PyPy's rpython
+suite once cot-assert 0.1.0 rewrote it; the same source translates with plain
+asserts. The ones still open are strict xfails; see docs/design/rpython.md.
 """
 
 from __future__ import absolute_import, division, print_function
 
 import pytest
 from rpython.annotator.annrpython import RPythonAnnotator
-from rpython.annotator.model import AnnotatorError, UnionError
-from rpython.rtyper.test.test_llinterp import interpret
+from rpython.rtyper.llinterp import LLException
+from rpython.rtyper.test.test_llinterp import get_interpreter, interpret
+from rpython.translator.translator import TranslationContext, graphof
 
+from cot_assert._llexc import from_llexception
 from cot_assert._rewrite import load_source
 
 HEADER = """
@@ -40,20 +41,9 @@ def rewritten(source):
     return load_source(HEADER + source, "pypy_suite_case")
 
 
-def knowntype_too_coarse(annotations):
-    return pytest.mark.xfail(
-        raises=UnionError,
-        strict=True,
-        reason="v() specializes on knowntype, which %s share" % annotations,
-    )
-
-
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="SomeTypeOf reaches `obj is None` in rpy_repr and bk.valueoftype(None)",
-)
 def test_type_is_narrows():
+    """SomeTypeOf crashes `is None` in the annotator."""
+
     f = rewritten(
         """
 def f(x):
@@ -65,8 +55,9 @@ def f(x):
     assert s.classdef.name.endswith(".C")
 
 
-@knowntype_too_coarse("SomePtr to different GcStructs")
 def test_pointers_to_different_structs():
+    """Pointers to different structs share a knowntype."""
+
     f = rewritten(
         """
 def f():
@@ -80,8 +71,9 @@ def f():
     assert interpret(f, []) == 0
 
 
-@knowntype_too_coarse("SomePtr and SomeInteriorPtr")
 def test_interior_pointers():
+    """Pointers and interior pointers share a knowntype."""
+
     f = rewritten(
         """
 BIG = lltype.GcStruct(
@@ -100,8 +92,9 @@ def f():
     assert interpret(f, []) == 0
 
 
-@knowntype_too_coarse("SomeWeakRef to unrelated classes")
 def test_weakrefs_to_unrelated_classes():
+    """Weakrefs to unrelated classes share a knowntype."""
+
     f = rewritten(
         """
 def f():
@@ -117,8 +110,9 @@ def f():
     assert interpret(f, []) == 0
 
 
-@knowntype_too_coarse("lists of different item types")
 def test_lists_of_different_item_types():
+    """Lists of different items share a knowntype."""
+
     f = rewritten(
         """
 def f(n):
@@ -132,8 +126,9 @@ def f(n):
     assert interpret(f, [3]) == 0
 
 
-@knowntype_too_coarse("tuples of different lengths")
 def test_tuples_of_different_lengths():
+    """Tuples of different lengths share a knowntype."""
+
     f = rewritten(
         """
 def f(n):
@@ -147,12 +142,9 @@ def f(n):
     assert interpret(f, [3]) == 0
 
 
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="isinstance() is folded on the symbolic constant, then on a plain int",
-)
 def test_symbolic_constant_then_variable():
+    """isinstance() on the prebuilt symbolic is False, on the variable True."""
+
     f = rewritten(
         """
 from rpython.rtyper.lltypesystem import llarena
@@ -171,15 +163,15 @@ def f():
     return 0
 """
     )["f"]
-    assert interpret(f, []) == 0
+    # the llinterpreter cannot compare symbolic sizes; PyPy's test compiles
+    t = TranslationContext()
+    t.buildannotator().build_types(f, [])
+    t.buildrtyper().specialize()
 
 
-@pytest.mark.xfail(
-    raises=UnionError,
-    strict=True,
-    reason="SomeAddress has knowntype object; isinstance(obj, float) is not folded",
-)
 def test_address():
+    """SomeAddress has knowntype object, like anything unknown."""
+
     f = rewritten(
         """
 def f():
@@ -192,12 +184,9 @@ def f():
     assert interpret(f, []) == 0
 
 
-@pytest.mark.xfail(
-    raises=AnnotatorError,
-    strict=True,
-    reason="a module bound by a local import is captured as a value",
-)
 def test_module_imported_in_function():
+    """RPython cannot represent a module."""
+
     f = rewritten(
         """
 def f(n):
@@ -209,12 +198,9 @@ def f(n):
     assert interpret(f, [3]) == 0
 
 
-@pytest.mark.xfail(
-    raises=UnionError,
-    strict=True,
-    reason="the message object becomes the msg field, which other sites make str",
-)
 def test_non_string_message():
+    """The msg field is str, whatever the assert passed."""
+
     f = rewritten(
         """
 def f(n):
@@ -223,7 +209,14 @@ def f(n):
     return 0
 """
     )["f"]
-    assert interpret(f, [3]) == 0
+    interp, graph = get_interpreter(f, [0])
+    assert interp.eval_graph(graph, [3]) == 0
+    messages = []
+    for n in (0, 11):
+        with pytest.raises(LLException) as excinfo:
+            interp.eval_graph(graph, [n])
+        messages.append(from_llexception(interp, excinfo.value).msg)
+    assert messages == ["positive", "<object>"]
 
 
 @pytest.mark.xfail(
@@ -233,7 +226,6 @@ def f(n):
 )
 def test_remove_asserts_removes_rewritten_asserts():
     from rpython.translator.backendopt.removeassert import remove_asserts
-    from rpython.translator.translator import TranslationContext, graphof
 
     fn = rewritten(
         """

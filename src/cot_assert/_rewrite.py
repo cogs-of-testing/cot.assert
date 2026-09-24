@@ -117,7 +117,12 @@ def _is_constant(node):
 
 
 def _function_locals(func):
-    """Names local to ``func``: its parameters and everything it binds."""
+    """Names local to ``func`` whose values asserts track.
+
+    Its parameters and everything it binds, except names bound only by
+    import: those are modules or globals of other modules, shown by name
+    like the globals of this one, and RPython cannot pass a module around.
+    """
     names = set()
     args = func.args
     if PY2:
@@ -135,9 +140,6 @@ def _function_locals(func):
             names.add(node.id)
         elif isinstance(node, (ast.Global,) + _NONLOCAL):
             declared_global.update(node.names)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
         elif isinstance(node, _SCOPES):
             names.add(node.name)
         elif isinstance(node, ast.ExceptHandler) and isinstance(node.name, str):
@@ -275,11 +277,14 @@ class AssertRewriter(object):
         self.labels = []
         self.paths = []
         self.node_ids = 0
+        # (block, temporary) in assignment order
+        self.temps = []
 
     def rewrite(self, stmt):
         self.msg = stmt.msg
         block = []
         shape = self.check(stmt.test, block, _Path())
+        self.release_temps()
         path_labels = [[self.labels[slot] for slot in slots] for slots, _ in self.paths]
         self.module.sites.append(
             (self.site_name, unparse(stmt.test), path_labels, shape, self.paths)
@@ -287,6 +292,17 @@ class AssertRewriter(object):
         for new in block:
             ast.copy_location(new, stmt)
         return block
+
+    def release_temps(self):
+        """Delete temporaries once the assert has passed.
+
+        The end of the block a temporary is assigned in is reached only on
+        success, and only when the assignment ran. Deleting rather than
+        resetting to None keeps each temporary at one type for RPython, and
+        stops it keeping the tested objects alive.
+        """
+        for block, temp in self.temps:
+            block.append(ast.Delete([ast.Name(temp, ast.Del())]))
 
     def new_id(self):
         self.node_ids += 1
@@ -301,7 +317,10 @@ class AssertRewriter(object):
             [_call(_attr(_name(RUNTIME), "v"), [expr]) for expr in path.exprs],
             ast.Load(),
         )
-        msg = copy.deepcopy(self.msg) if self.msg is not None else _const(None)
+        if self.msg is None:
+            msg = _const(None)
+        else:
+            msg = _call(_attr(_name(RUNTIME), "m"), [copy.deepcopy(self.msg)])
         return _raise(
             _call(
                 _attr(_name(RUNTIME), "fail"),
@@ -397,6 +416,7 @@ class AssertRewriter(object):
         new, build = self.rebuild(expr, block, path)
         temp = self.module.fresh("cot")
         block.append(ast.Assign([_name(temp, store=True)], new))
+        self.temps.append((block, temp))
         slot = self.slot(_name(temp), label, path)
         return _name(temp), build(slot)
 

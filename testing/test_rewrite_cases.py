@@ -27,7 +27,6 @@ def test_host_failing_keeps_objects(entry, args, path, msg, labels, values):
     assert len(exc.values) == len(values)
 
 
-@pytest.mark.xfail(strict=True, reason="temporaries are never reset")
 def test_passed_assert_releases_its_values(rewritten):
     ns = rewritten(
         """
@@ -59,3 +58,17 @@ def test_non_string_message_under_pytest_raises(rewritten):
     with pytest.raises(AssertionError) as excinfo:
         ns["check"]()
     assert "[1, 2]" in str(excinfo.value)
+
+
+def test_unicode_message_stays_unicode(rewritten):
+    ns = rewritten(
+        """
+        MESSAGE = u"\\u00e4rger"
+
+        def check():
+            assert 1 == 2, MESSAGE
+        """
+    )
+    with pytest.raises(AssertionError) as excinfo:
+        ns["check"]()
+    assert excinfo.value.msg is ns["MESSAGE"]

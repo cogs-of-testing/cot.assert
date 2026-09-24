@@ -192,7 +192,7 @@ def render(exc, formatter=None):
     parts = []
     if site is None or site.shape is None:
         if exc.msg is not None:
-            parts.append(formatter.format_assertmsg(exc.msg))
+            parts.append(formatter.format_assertmsg(exc.msg_obj))
         if site is not None:
             parts.append("assert " + site.source)
         extra = list(zip(exc.all_labels(), values))
@@ -201,7 +201,7 @@ def render(exc, formatter=None):
         explained = _Explainer(formatter, dict(zip(slots, values)), set(marks))
         explanation = explained.expl(site.shape)
         if exc.msg is not None:
-            parts.append(formatter.format_assertmsg(exc.msg))
+            parts.append(formatter.format_assertmsg(exc.msg_obj))
             parts.append(">assert " + explanation)
         else:
             parts.append("assert " + explanation)

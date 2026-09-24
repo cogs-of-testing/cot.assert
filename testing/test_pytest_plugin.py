@@ -128,7 +128,6 @@ def test_cache_name_differs_from_pytest(testdir, run_pytest):
     assert len(theirs) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="msg holds the message object")
 def test_non_string_message_fails_the_test(testdir, run_pytest):
     testdir.makepyfile(test_msg="def test_it():\n    assert 1 == 2, [1, 2]\n")
     result = run_pytest("--cot-assert")

@@ -35,12 +35,20 @@ own `SafeRepr` when an object's `__repr__` raises.
   method.
 - **Names not local to the function** are not tracked: under RPython they
   are mostly functions and classes. pytest shows the repr of global data;
-  here the name stays.
+  here the name stays. Names a function binds by `import` count as not
+  local: they are modules, which RPython cannot pass to `v()`.
+- **Temporaries are deleted** once the assert passes, not reset to `None`,
+  so they neither keep the tested objects alive nor change type.
 
 ## finalize()
 
+`msg` is always text or None, because pytest reads it as text as soon as
+it catches the exception, before the plugin can finalize it. A message that
+is not a string is shown as `str()` shows it there, and kept in `msg_obj`
+for the explanation, which formats it the way pytest does.
+
 `exc.finalize(mode)` renders once and keeps only text: `values` and `site`
-become None and `msg` becomes its `str`. With `mode="notes"` the explanation
+become None and `msg_obj` becomes `msg`. With `mode="notes"` the explanation
 becomes a PEP 678 note (`add_note` on 3.11+, `__notes__` before); with
 `mode="message"` it becomes `args[0]`, for hosts that do not show notes.
 A finalized exception pickles (a custom `__reduce__`, since `BaseException`'s

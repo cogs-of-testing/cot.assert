@@ -47,6 +47,11 @@ class AnnotatedAssertion(AssertionError):
 
     def init_fields(self, msg, site, path, values):
         self.msg = msg
+        if not we_are_translated():
+            # pytest reads msg as text when it catches the exception, before
+            # the plugin can finalize it; the object is kept for rendering
+            self.msg_obj = msg
+            self.msg = _message_text(msg)
         self.site = site
         self.path = path
         if values is None:
@@ -55,7 +60,7 @@ class AnnotatedAssertion(AssertionError):
         self.labels = []
         self.rendered = None
 
-    @specialize.argtype(2)
+    @specialize.call_location()
     def annotate(self, label, obj):
         """Attach a labelled value; the label follows the site's labels."""
         self.labels.append(label)
@@ -108,6 +113,7 @@ class AnnotatedAssertion(AssertionError):
         self.site = None
         if self.msg is not None:
             self.msg = str(self.msg)
+        self.msg_obj = self.msg
         if mode == "notes":
             _add_note(self, text)
         else:
@@ -135,6 +141,22 @@ def annotated(msg=None, site=None, path=0, values=None):
     exc = AnnotatedAssertion()
     exc.init_fields(msg, site, path, values)
     return exc
+
+
+def _message_text(obj):
+    """Host only: the message as AssertionError(obj) would show it."""
+    if obj is None or isinstance(obj, _STRING_TYPES):
+        return obj
+    try:
+        return str(obj)
+    except Exception:
+        return object.__repr__(obj)
+
+
+try:
+    _STRING_TYPES = (basestring,)  # noqa: F821
+except NameError:
+    _STRING_TYPES = (str,)
 
 
 def _unpickle(cls, args, state):

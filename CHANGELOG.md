@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Fixes for what running PyPy's rpython suite under cot-assert turned up.
+
+- Translated `v()` is specialized per call site and picks the repr from the
+  annotation: asserts on pointers, interior pointers, weakrefs, lists,
+  tuples, addresses, `type(x)` and symbolic sizes translate.
+- Names a function binds by `import` are shown by name, not tracked: RPython
+  cannot pass a module to `v()`.
+- Temporaries are deleted once an assert passes, so they no longer keep the
+  tested objects alive.
+- `msg` is always text: a message that is not a string no longer crashes
+  pytest 4.6 with `INTERNALERROR`, and translates. The object stays in
+  `msg_obj` for the explanation.
+
 ## 0.1.0
 
 First release.
