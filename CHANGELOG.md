@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 Fixes for what running PyPy's full rpython suite under 0.2.0 turned up.
 
