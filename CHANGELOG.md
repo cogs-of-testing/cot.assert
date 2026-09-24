@@ -1,21 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-Fixes for what running PyPy's rpython suite under cot-assert turned up.
+Fixes for what running PyPy's rpython suite under cot-assert 0.1.0 turned
+up. Each case has a reproducer in
+`testing/translated/test_pypy_suite_cases.py`.
 
-- Translated `v()` is specialized per call site and picks the repr from the
-  annotation: asserts on pointers, interior pointers, weakrefs, lists,
-  tuples, addresses, `type(x)` and symbolic sizes translate.
-- Names a function binds by `import` are shown by name, not tracked: RPython
-  cannot pass a module to `v()`.
+- Translated values are captured per call site, and the repr is picked from
+  the annotation, not by `isinstance()`. Asserts now translate on pointers
+  to different structs, interior pointers, weakrefs to unrelated classes,
+  lists of different item types, tuples of different lengths, addresses,
+  `type(x)` and symbolic sizes. `AnnotatedAssertion.annotate()` is
+  specialized the same way.
+- A name a function binds with `import` is shown by name, not tracked:
+  RPython cannot pass a module to a function.
 - Temporaries are deleted once an assert passes, so they no longer keep the
-  tested objects alive.
-- `msg` is always text: a message that is not a string no longer crashes
-  pytest 4.6 with `INTERNALERROR`, and translates. The object stays in
-  `msg_obj` for the explanation.
-- Documented: rewritten asserts are removed by `remove_asserts` only with a
-  patched rpython, and a failing one is not fatal where first caught.
+  tested objects alive, for example across `del x; gc.collect()` in a test.
+- `AnnotatedAssertion.msg` is always text or None. A message that is not a
+  string (`assert x, [1, 2]`) crashed pytest 4.6 with `INTERNALERROR`, and
+  did not translate. The message object is in the new `msg_obj`, for the
+  explanation.
+- `backendopt.remove_asserts` (`--opt=3`, `size`, `mem`) removes rewritten
+  asserts only with a patched rpython. A failing rewritten assert is not
+  fatal where it is first caught, unlike a plain `AssertionError`; this is
+  accepted. See `docs/design/rpython.md`.
 
 ## 0.1.0
 
