@@ -432,14 +432,14 @@ class AssertRewriter(object):
             sym = binop(expr.op)
             return (
                 ast.BinOp(left, expr.op, right),
-                lambda slot: ("binop", sym, left_shape, right_shape),
+                lambda slot: ("binop", slot, sym, left_shape, right_shape),
             )
         if isinstance(expr, ast.UnaryOp):
             operand, operand_shape = self.track(expr.operand, block, path)
             pattern = unaryop(expr.op) + "%s"
             return (
                 ast.UnaryOp(expr.op, operand),
-                lambda slot: ("unary", pattern, operand_shape),
+                lambda slot: ("unary", slot, pattern, operand_shape),
             )
         if isinstance(expr, ast.Compare) and len(expr.ops) == 1:
             test, shape = self.cond(expr, block, path)
