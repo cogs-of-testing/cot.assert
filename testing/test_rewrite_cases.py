@@ -25,3 +25,37 @@ def test_host_failing_keeps_objects(entry, args, path, msg, labels, values):
     assert (exc.path, exc.msg, exc.all_labels()) == (path, msg, labels)
     # host values are the objects; only the rendering matches RPython's
     assert len(exc.values) == len(values)
+
+
+@pytest.mark.xfail(strict=True, reason="temporaries are never reset")
+def test_passed_assert_releases_its_values(rewritten):
+    ns = rewritten(
+        """
+        import gc
+        import weakref
+
+        class A(object):
+            pass
+
+        def check():
+            a = A()
+            wr = weakref.ref(a)
+            assert wr() is a
+            del a
+            gc.collect()
+            return wr()
+        """
+    )
+    assert ns["check"]() is None
+
+
+def test_non_string_message_under_pytest_raises(rewritten):
+    ns = rewritten(
+        """
+        def check():
+            assert 1 == 2, [1, 2]
+        """
+    )
+    with pytest.raises(AssertionError) as excinfo:
+        ns["check"]()
+    assert "[1, 2]" in str(excinfo.value)
