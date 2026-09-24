@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Fixes for what running PyPy's full rpython suite under 0.2.0 turned up.
+
+- Translated values are rendered by the rtyper from their final
+  annotation. Integers of every size render as numbers: 0.2.0 sent `r_uint`,
+  `r_longlong`, `USHORT` and the like to the float repr, which failed to
+  type. A value whose annotation generalizes (None to an instance, str to
+  str-or-None) no longer fails with "annotation got narrower".
+- rpython is looked up while translating, not when cot-assert is imported,
+  so it may become importable after the pytest plugin has loaded (a
+  conftest that puts it on `sys.path`, a relative `PYTHONPATH`).
+
 ## 0.2.0
 
 Fixes for what running PyPy's rpython suite under cot-assert 0.1.0 turned

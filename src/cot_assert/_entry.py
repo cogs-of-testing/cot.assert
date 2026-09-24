@@ -5,7 +5,7 @@ from __future__ import absolute_import, division, print_function
 import os
 
 from ._error import AnnotatedAssertion
-from ._rpy import we_are_translated
+from ._rpy import rpy
 
 
 def report_annotated(func):
@@ -21,7 +21,7 @@ def report_annotated(func):
             return func(*args)
         # RPython rejects ``except`` on AssertionError or any subclass
         except Exception as exc:
-            if we_are_translated() and isinstance(exc, AnnotatedAssertion):
+            if rpy.we_are_translated() and isinstance(exc, AnnotatedAssertion):
                 os.write(2, exc.render_plain() + "\n")
             raise
 

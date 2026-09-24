@@ -2,12 +2,12 @@
 
 Everything in this module that is not marked host-only is in the RPython
 subset: fields keep one type per attribute, and host-only paths sit behind
-``we_are_translated()``, which the flow space folds to True.
+``rpy.we_are_translated()``, which the flow space folds to True.
 """
 
 from __future__ import absolute_import, division, print_function
 
-from ._rpy import specialize, we_are_translated
+from ._rpy import call_location, rpy
 from ._values import value
 
 
@@ -41,13 +41,13 @@ class AnnotatedAssertion(AssertionError):
     _attrs_ = ["msg", "site", "path", "values", "labels", "rendered"]
 
     def __init__(self, msg=None, site=None, path=0, values=None):
-        if not we_are_translated():
+        if not rpy.we_are_translated():
             AssertionError.__init__(self)
         self.init_fields(msg, site, path, values)
 
     def init_fields(self, msg, site, path, values):
         self.msg = msg
-        if not we_are_translated():
+        if not rpy.we_are_translated():
             # pytest reads msg as text when it catches the exception, before
             # the plugin can finalize it; the object is kept for rendering
             self.msg_obj = msg
@@ -60,7 +60,7 @@ class AnnotatedAssertion(AssertionError):
         self.labels = []
         self.rendered = None
 
-    @specialize.call_location()
+    @call_location
     def annotate(self, label, obj):
         """Attach a labelled value; the label follows the site's labels."""
         self.labels.append(label)
@@ -126,7 +126,7 @@ class AnnotatedAssertion(AssertionError):
         return _unpickle, (type(self), self.args, self.__dict__)
 
     def __str__(self):
-        if we_are_translated():
+        if rpy.we_are_translated():
             return self.render_plain()
         if self.args:
             return str(self.args[0])

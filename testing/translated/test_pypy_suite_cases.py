@@ -9,7 +9,6 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 from rpython.annotator.annrpython import RPythonAnnotator
-from rpython.rtyper.error import TyperError
 from rpython.rtyper.llinterp import LLException
 from rpython.rtyper.test.test_llinterp import get_interpreter, interpret
 from rpython.translator.translator import TranslationContext, graphof
@@ -286,12 +285,9 @@ def fn(n):
 # found running PyPy's rpython suite under 0.2.0
 
 
-@pytest.mark.xfail(
-    raises=TyperError,
-    strict=True,
-    reason="SomeInteger subclasses SomeFloat: sized ints went to float_repr",
-)
 def test_sized_integer():
+    """SomeInteger subclasses SomeFloat; USHORT has no arithmetic."""
+
     f = rewritten(
         """
 from rpython.rlib.rarithmetic import byteswap
@@ -306,11 +302,6 @@ def f():
     assert interpret(f, []) == 0
 
 
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="the repr kind is a constant that changes as the argument generalizes",
-)
 def test_value_generalizing_to_another_kind():
     """PyPy's test_nongc.py::test_isinstance; smaller variants pass."""
     f = rewritten(
@@ -364,9 +355,6 @@ RPythonAnnotator().build_types(f, [int])
 """
 
 
-@pytest.mark.xfail(
-    strict=True, reason="rpython is looked up once, when cot_assert is imported"
-)
 def test_rpython_importable_only_after_cot_assert(tmpdir):
     """PyPy's CI made rpython importable only after the plugin had loaded."""
     import os
@@ -393,3 +381,49 @@ def test_rpython_importable_only_after_cot_assert(tmpdir):
     )
     output = proc.communicate()[0].decode("utf-8", "replace")
     assert proc.returncode == 0, output
+
+
+def test_values_render_by_final_annotation():
+    """The rtyper picks each repr from the annotation the value ends with."""
+    f = rewritten(
+        """
+from rpython.rlib.rarithmetic import r_longlong, r_uint
+from rpython.rtyper.lltypesystem import rffi
+
+from cot_assert import annotated
+
+def f(n):
+    text = None
+    if n > 1:
+        text = "t"
+    if n > 0:
+        raise (
+            annotated("values")
+            .annotate("small", rffi.cast(rffi.USHORT, n))
+            .annotate("unsigned", r_uint(n))
+            .annotate("long", r_longlong(-n))
+            .annotate("flag", n > 10)
+            .annotate("half", n / 2.0)
+            .annotate("char", chr(65 + n))
+            .annotate("text", text)
+            .annotate("nothing", None)
+            .annotate("box", W1())
+        )
+    return 0
+"""
+    )["f"]
+    interp, graph = get_interpreter(f, [0])
+    with pytest.raises(LLException) as excinfo:
+        interp.eval_graph(graph, [1])
+    exc = from_llexception(interp, excinfo.value)
+    assert exc.values == [
+        "1",
+        "1",
+        "-1",
+        "False",
+        "0.5",
+        "'B'",
+        "None",
+        "None",
+        "<object>",
+    ]

@@ -24,11 +24,21 @@ keeps a reproducer for each difference found there.
   pointers to different structs, pointers and interior pointers, weakrefs to
   unrelated classes, lists of different items, tuples of different lengths.
   The cost is a small graph per tracked value, on failure paths only.
-- **The repr is picked from the annotation.** `annotation_kind()` is an
-  extregistry function that folds to a constant per annotation: None, bool,
-  int, float, str (or str-or-None), or other, which renders `<object>`
-  without touching the value. `isinstance()` does not work for this: see
-  below.
+- **The repr is picked by the rtyper.** `rpy.repr()` and `rpy.message()`
+  are extregistry functions annotated as str whatever they get; the rtyper
+  renders from the final annotation: None, bool, every integer type
+  (widened to a word first: `str()` of a `USHORT` does not type in rpython
+  either), float, str or char (quoted, `None` when it can be None), or
+  anything else as `<object>` without touching the value. Deciding while
+  annotating does not work: `isinstance()` misfolds (see below), and a
+  constant choice has to change when the argument generalizes (None to an
+  instance, str to str-or-None), which the annotator never allows.
+- **rpython is looked up while translating**, not when the package is
+  imported. pytest imports the plugin before a conftest can put rpython on
+  `sys.path`; an import-time lookup kept host stand-ins for the whole
+  session, and `we_are_translated()` stopped folding. RPython-subset code
+  goes through `rpy`, a frozen object whose attributes the flow space reads
+  at translation time; `call_location` sets `_annspecialcase_` directly.
 - **Names bound by `import` are not tracked**; RPython cannot represent a
   module, so passing one to `v()` fails to annotate.
 - **Float repr** goes through `rfloat.formatd(x, "r", 0, DTSF_ADD_DOT_0)`;
@@ -82,7 +92,7 @@ once rpython changes, and the reproducers would keep passing.
 | workaround | rpython behaviour behind it | undo once |
 |---|---|---|
 | `annotated()` and `_attrs_` instead of the constructor | every `AssertionError` subclass counts as built-in (above) | `classdesc.py` is narrowed back to the py lib's class |
-| `annotation_kind()` instead of `isinstance()` in the repr | `x is None` on `SomeTypeOf` (from `type(x)`) asserts in `bk.valueoftype(None)`, `signature.py`, also without cot-assert; `isinstance()` on a prebuilt symbolic int folds on the host object, which is no int, so the same variable flips from not-int to int once it stops being constant ("annotation got narrower"); `SomeAddress` has `knowntype` `object`, so `isinstance(adr, float)` does not fold | all three are fixed; even then the extregistry kind is the simpler dispatch |
+| repr chosen by the rtyper instead of `isinstance()` in RPython code | `x is None` on `SomeTypeOf` (from `type(x)`) asserts in `bk.valueoftype(None)`, `signature.py`, also without cot-assert; `isinstance()` on a prebuilt symbolic int folds on the host object, which is no int, so the same variable flips from not-int to int once it stops being constant ("annotation got narrower"); `SomeAddress` has `knowntype` `object`, so `isinstance(adr, float)` does not fold | all three are fixed, and a constant per call site may then change; so in practice staying |
 | `specialize.call_location()` for `v()`, `m()`, `annotate()` | `specialize.argtype` keys on `knowntype` only | a specialization keyed on the full annotation or its low-level type exists (`arglltype` is mix-level only) |
 
 The `remove_asserts` patch below is an rpython fix with no cot-assert
