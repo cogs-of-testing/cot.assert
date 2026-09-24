@@ -14,6 +14,8 @@ Fixes for what running PyPy's rpython suite under cot-assert turned up.
 - `msg` is always text: a message that is not a string no longer crashes
   pytest 4.6 with `INTERNALERROR`, and translates. The object stays in
   `msg_obj` for the explanation.
+- Documented: rewritten asserts are removed by `remove_asserts` only with a
+  patched rpython, and a failing one is not fatal where first caught.
 
 ## 0.1.0
 

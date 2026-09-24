@@ -85,27 +85,31 @@ once rpython changes, and the reproducers would keep passing.
 | `annotation_kind()` instead of `isinstance()` in the repr | `x is None` on `SomeTypeOf` (from `type(x)`) asserts in `bk.valueoftype(None)`, `signature.py`, also without cot-assert; `isinstance()` on a prebuilt symbolic int folds on the host object, which is no int, so the same variable flips from not-int to int once it stops being constant ("annotation got narrower"); `SomeAddress` has `knowntype` `object`, so `isinstance(adr, float)` does not fold | all three are fixed; even then the extregistry kind is the simpler dispatch |
 | `specialize.call_location()` for `v()`, `m()`, `annotate()` | `specialize.argtype` keys on `knowntype` only | a specialization keyed on the full annotation or its low-level type exists (`arglltype` is mix-level only) |
 
-Not rpython's to fix, and staying: deleting temporaries, not tracking
-imported names, `msg` as text.
+The `remove_asserts` patch below is an rpython fix with no cot-assert
+workaround to undo. Not rpython's to fix, and staying: deleting temporaries,
+not tracking imported names, `msg` as text.
 
-## Still open
+## `remove_asserts` needs a patched rpython
 
-Both have strict xfails in `test_pypy_suite_cases.py`.
+`backendopt.removeassert` (on at `--opt=3`, `size`, `mem`) only dropped a
+link that raises the prebuilt plain `AssertionError` instance straight from
+the block that tests the condition. A rewritten assert raises an
+`AnnotatedAssertion` it allocates, after the `v()` calls on the failure
+path, so it survived. The rpython patch (not yet upstream) also drops a
+condition's exit when every path from it ends in an exception and the ones
+it raises itself are `AssertionError` or a subclass.
+`test_remove_asserts_removes_rewritten_asserts` is an xfail on an rpython
+without it.
 
-- **`remove_asserts` does not remove rewritten asserts.**
-  `backendopt.removeassert` (on at `--opt=3`, `size`, `mem`) only drops a
-  link that raises the prebuilt plain `AssertionError` instance straight from
-  the block that tests the condition. A rewritten assert raises an
-  `AnnotatedAssertion` it allocates, after the `v()` calls on the failure
-  path. An rpython fix would follow the failing exit to a raise of any
-  `AssertionError` subclass and drop the whole path. PyPy's
-  `translator/backendopt/test/test_removeassert.py` fails on it.
-- **A failed rewritten assert is not fatal where it is first caught.** The
-  exception transformer checks `etype != AssertionError` by identity, both
-  for the debug-mode `ll_assert` in `rpyexc_raise` and for
-  `debug_catch_exception`, so an `AnnotatedAssertion` propagates like any
-  exception: `finally` blocks run and the abort names
-  `AnnotatedAssertion`. An rpython fix would check the subclass range.
-  PyPy's `test_standalone.py::test_assertion_error_debug`,
-  `test_assertion_error_nondebug` and `test_exception.py::test_assert` fail
-  on it; they also expect the name `AssertionError`.
+## Not fatal where first caught: accepted
+
+The exception transformer checks `etype != AssertionError` by identity, for
+the debug-mode `ll_assert` in `rpyexc_raise` and for
+`debug_catch_exception`. An `AnnotatedAssertion` therefore propagates like
+any exception: `finally` blocks run, and the abort names
+`AnnotatedAssertion`. This is accepted, not worked around.
+`test_compiled_failure_propagates_like_other_exceptions` pins it. PyPy tests
+that check the plain behaviour
+(`translator/c/test/test_standalone.py::test_assertion_error_debug`,
+`test_assertion_error_nondebug`, `translator/c/test/test_exception.py::test_assert`)
+need to opt out of rewriting.

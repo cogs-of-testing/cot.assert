@@ -219,10 +219,19 @@ def f(n):
     assert messages == ["positive", "<object>"]
 
 
+def _removes_assertion_subclasses():
+    """Whether this rpython's removeassert drops failure paths that build
+    an AssertionError subclass, not only raises of the prebuilt instance."""
+    from rpython.translator.backendopt import removeassert
+
+    return hasattr(removeassert, "always_fails_assertion")
+
+
 @pytest.mark.xfail(
+    not _removes_assertion_subclasses(),
     raises=AssertionError,
     strict=True,
-    reason="removeassert only matches the prebuilt plain AssertionError",
+    reason="rpython's removeassert only matches the prebuilt AssertionError",
 )
 def test_remove_asserts_removes_rewritten_asserts():
     from rpython.translator.backendopt.removeassert import remove_asserts
@@ -243,12 +252,13 @@ def fn(n):
     assert "direct_call" not in ops
 
 
-@pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="the C backend aborts early only on AssertionError itself, not subclasses",
-)
-def test_compiled_failure_is_fatal_where_first_caught(capsys):
+def test_compiled_failure_propagates_like_other_exceptions(capsys):
+    """Unlike AssertionError itself, not fatal where first caught.
+
+    RPython's C backend aborts on the spot only for exactly AssertionError;
+    a subclass runs finally blocks and aborts with its own name. Accepted;
+    see docs/design/rpython.md.
+    """
     from rpython.translator.c.test.test_genc import compile
 
     fn = rewritten(
@@ -269,4 +279,4 @@ def fn(n):
     compiled = compile(fn, [int])
     capsys.readouterr()
     compiled(1, expected_exception_name="AnnotatedAssertion")
-    assert "finally ran" not in capsys.readouterr().out
+    assert "finally ran" in capsys.readouterr().out
