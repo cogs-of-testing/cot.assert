@@ -9,6 +9,7 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 from rpython.annotator.annrpython import RPythonAnnotator
+from rpython.rtyper.error import TyperError
 from rpython.rtyper.llinterp import LLException
 from rpython.rtyper.test.test_llinterp import get_interpreter, interpret
 from rpython.translator.translator import TranslationContext, graphof
@@ -280,3 +281,115 @@ def fn(n):
     capsys.readouterr()
     compiled(1, expected_exception_name="AnnotatedAssertion")
     assert "finally ran" in capsys.readouterr().out
+
+
+# found running PyPy's rpython suite under 0.2.0
+
+
+@pytest.mark.xfail(
+    raises=TyperError,
+    strict=True,
+    reason="SomeInteger subclasses SomeFloat: sized ints went to float_repr",
+)
+def test_sized_integer():
+    f = rewritten(
+        """
+from rpython.rlib.rarithmetic import byteswap
+from rpython.rtyper.lltypesystem import rffi
+
+def f():
+    swapped = byteswap(rffi.cast(rffi.USHORT, 0x0102))
+    assert rffi.cast(lltype.Signed, swapped) == 0x0201
+    return 0
+"""
+    )["f"]
+    assert interpret(f, []) == 0
+
+
+@pytest.mark.xfail(
+    raises=AssertionError,
+    strict=True,
+    reason="the repr kind is a constant that changes as the argument generalizes",
+)
+def test_value_generalizing_to_another_kind():
+    """PyPy's test_nongc.py::test_isinstance; smaller variants pass."""
+    f = rewritten(
+        """
+from rpython.rlib.objectmodel import free_non_gc_object
+
+class A(object):
+    _alloc_flavor_ = "raw"
+
+class RawB(A):
+    pass
+
+class RawC(RawB):
+    pass
+
+def f(i):
+    if i == 0:
+        o = None
+    elif i == 1:
+        o = A()
+    elif i == 2:
+        o = RawB()
+    else:
+        o = RawC()
+    res = 100 * isinstance(o, A) + 10 * isinstance(o, RawB) + isinstance(o, RawC)
+    if i == 0:
+        pass
+    elif i == 1:
+        assert isinstance(o, A)
+        free_non_gc_object(o)
+    elif i == 2:
+        assert isinstance(o, RawB)
+        free_non_gc_object(o)
+    else:
+        assert isinstance(o, RawC)
+        free_non_gc_object(o)
+    return res
+"""
+    )["f"]
+    RPythonAnnotator().build_types(f, [int])
+
+
+CHECK_LATE_RPYTHON = """
+import sys
+import cot_assert
+from cot_assert._rewrite import load_source
+sys.path.append(sys.argv[1])
+from rpython.annotator.annrpython import RPythonAnnotator
+f = load_source("def f(n):\\n    assert n > 0\\n    return n\\n", "late")["f"]
+RPythonAnnotator().build_types(f, [int])
+"""
+
+
+@pytest.mark.xfail(
+    strict=True, reason="rpython is looked up once, when cot_assert is imported"
+)
+def test_rpython_importable_only_after_cot_assert(tmpdir):
+    """PyPy's CI made rpython importable only after the plugin had loaded."""
+    import os
+    import subprocess
+    import sys
+
+    import rpython
+
+    checkout = os.path.dirname(os.path.dirname(os.path.abspath(rpython.__file__)))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        entry
+        for entry in env.get("PYTHONPATH", "").split(os.pathsep)
+        if os.path.abspath(entry) != checkout
+    )
+    script = tmpdir.join("check.py")
+    script.write(CHECK_LATE_RPYTHON)
+    proc = subprocess.Popen(
+        [sys.executable, str(script), checkout],
+        env=env,
+        cwd=str(tmpdir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = proc.communicate()[0].decode("utf-8", "replace")
+    assert proc.returncode == 0, output
