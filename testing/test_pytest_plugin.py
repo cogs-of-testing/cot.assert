@@ -15,6 +15,33 @@ def test_kind():
 """
 
 
+def test_none_of_pytests_hook_methods_run():
+    import types
+
+    from _pytest.assertion.rewrite import AssertionRewritingHook
+
+    from cot_assert.pytest_plugin import PytestRewriteHook
+
+    for name, value in vars(AssertionRewritingHook).items():
+        if isinstance(value, types.FunctionType):
+            ours = getattr(PytestRewriteHook, name)
+            assert getattr(ours, "__module__", "").startswith("cot_assert"), name
+
+
+def test_pytests_hook_is_replaced(testdir, run_pytest):
+    testdir.makepyfile(
+        test_hooks="""
+        import sys
+
+        def test_hooks():
+            names = [type(hook).__name__ for hook in sys.meta_path]
+            print("HOOKS=%s" % ",".join(n for n in names if "Rewrit" in n))
+        """
+    )
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*HOOKS=PytestRewriteHook"])
+
+
 def test_off_by_default(testdir, run_pytest):
     testdir.makepyfile(test_kind=KIND)
     result = run_pytest("-s")
@@ -91,6 +118,69 @@ def test_conftest_is_rewritten(testdir, run_pytest):
     assert result.ret == 1
 
 
+HELPER = "def check():\n    assert 1 == 2\n"
+
+USES_HELPER = """
+import helper
+
+def test_uses():
+    try:
+        helper.check()
+    except AssertionError as e:
+        print("KIND=" + type(e).__name__)
+"""
+
+
+def test_other_modules_are_not_rewritten(testdir, run_pytest):
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AssertionError*"])
+
+
+def test_register_assert_rewrite(testdir, run_pytest):
+    testdir.makeconftest("import pytest\npytest.register_assert_rewrite('helper')\n")
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_conftest_pytest_plugins_are_rewritten(testdir, run_pytest):
+    testdir.makeconftest("pytest_plugins = ['helper']\n")
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_register_after_import_warns(testdir, run_pytest):
+    testdir.makeconftest(
+        "import helper\nimport pytest\npytest.register_assert_rewrite('helper')\n"
+    )
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(
+        ["*KIND=AssertionError*", "*Module already imported so cannot be rewritten*"]
+    )
+
+
+def test_python_files_ini(testdir, run_pytest):
+    testdir.makeini("[pytest]\npython_files = check_*.py\n")
+    testdir.makepyfile(check_kind=KIND)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_file_named_on_command_line(testdir, run_pytest):
+    path = testdir.makepyfile(given=KIND)
+    result = run_pytest("-s", "--cot-assert", str(path))
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_assert_plain_turns_it_off(testdir, run_pytest):
+    testdir.makepyfile(test_kind=KIND)
+    result = run_pytest("-s", "--cot-assert", "--assert=plain")
+    result.stdout.fnmatch_lines(["*KIND=AssertionError*"])
+
+
 @pytest.mark.skipif(
     sys.version_info < (3, 11), reason="traceback shows notes from 3.11 on"
 )
@@ -126,6 +216,37 @@ def test_cache_name_differs_from_pytest(testdir, run_pytest):
     theirs = [name for name in cached if CACHE_TAG not in name]
     assert len(ours) == 1
     assert len(theirs) == 1
+
+
+@pytest.mark.skipif(sys.dont_write_bytecode, reason="needs pytest's bytecode cache")
+def test_cache_follows_a_moved_tree(testdir, run_pytest):
+    # pytest 4.6 takes a conftest's __file__ from the cached code, and failed
+    # with ImportMismatchError when the tree was mounted elsewhere
+    before = testdir.mkdir("before")
+    before.join("conftest.py").write(
+        "import pytest\n\n@pytest.fixture\ndef two():\n    return 2\n"
+    )
+    before.join("test_moved.py").write("def test_it(two):\n    assert two == 3\n")
+    run_pytest("--cot-assert", "before").assert_outcomes(failed=1)
+    cached = [str(p) for p in before.join("__pycache__").listdir()]
+    inodes = sorted(os.stat(p).st_ino for p in cached if "cot_assert-" in p)
+    after = testdir.tmpdir.join("after")
+    before.rename(after)
+    result = run_pytest("--cot-assert", "after")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["after*test_moved.py:2: *AnnotatedAssertion"])
+    assert "before" not in result.stdout.str()
+    moved = [str(p) for p in after.join("__pycache__").listdir()]
+    assert sorted(os.stat(p).st_ino for p in moved if "cot_assert-" in p) == inodes
+
+
+def test_cache_stale_after_same_size_edit(testdir, run_pytest):
+    test = testdir.makepyfile(test_edit="def test_it():\n    assert 2 == 2\n")
+    run_pytest("--cot-assert").assert_outcomes(passed=1)
+    st = os.stat(str(test))
+    test.write(test.read().replace("2 == 2", "2 == 3"))
+    os.utime(str(test), (st.st_atime, st.st_mtime))
+    run_pytest("--cot-assert").assert_outcomes(failed=1)
 
 
 def test_non_string_message_fails_the_test(testdir, run_pytest):

@@ -115,7 +115,17 @@ def test_traceback_shows_source(tree, hook):
     assert "with_source.py" in text
 
 
-@pytest.mark.skipif(PY2, reason="Python 2 has no bytecode cache for rewrites")
+def test_cache_not_written_without_bytecode(tree, hook, monkeypatch):
+    from cot_assert._hook import cache_path
+
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    path = tree("nocache_mod.py")
+    hook("nocache_mod")
+    import_module("nocache_mod")
+    assert not os.path.exists(cache_path(str(path)))
+
+
+@pytest.mark.skipif(sys.dont_write_bytecode, reason="writes no bytecode here")
 class TestCache(object):
     def cached(self, path):
         from cot_assert._hook import cache_path
@@ -149,14 +159,27 @@ class TestCache(object):
         hook("changed_mod")
         import_module("changed_mod")
         del sys.modules["changed_mod"]
-        path.write(textwrap.dedent(FAILING).replace("== 2", "== 3  # changed"))
-        # same second, different size: the header still tells them apart
+        st = os.stat(str(path))
+        path.write(textwrap.dedent(FAILING).replace("== 2", "== 3"))
+        # same size and mtime: only the source hash tells them apart
+        os.utime(str(path), (st.st_atime, st.st_mtime))
         exc = raised(import_module("changed_mod"), 1)
         assert str(exc) == "assert 1 == 3"
 
-    def test_not_written_without_bytecode(self, tree, hook, monkeypatch):
-        monkeypatch.setattr(sys, "dont_write_bytecode", True)
-        path = tree("nocache_mod.py")
-        hook("nocache_mod")
-        import_module("nocache_mod")
-        assert not os.path.exists(self.cached(path))
+    def test_follows_a_moved_source(self, tree, hook, monkeypatch, tmpdir):
+        old = tree("before/moved_mod.py")
+        monkeypatch.syspath_prepend(str(old.dirpath()))
+        hook("moved_mod")
+        import_module("moved_mod")
+        del sys.modules["moved_mod"]
+        sys.path.remove(str(old.dirpath()))
+        old.dirpath().rename(tmpdir.join("after"))
+        new = tmpdir.join("after", "moved_mod.py")
+        monkeypatch.syspath_prepend(str(new.dirpath()))
+
+        def no_rewrite(*args):
+            raise AssertionError("rewrote again")
+
+        monkeypatch.setattr(cot_assert._hook, "rewrite_source", no_rewrite)
+        module = import_module("moved_mod")
+        assert module.check.__code__.co_filename == str(new)

@@ -5,22 +5,34 @@ from __future__ import absolute_import, division, print_function
 import fnmatch
 import hashlib
 import os
+import platform
 import sys
 
+from . import _cache
 from ._rewrite import rewrite_source
 
 PY2 = sys.version_info[0] == 2
 
 
+REWRITER_SOURCES = (
+    "_rewrite.py",
+    "_unparse.py",
+    "_runtime.py",
+    "_error.py",
+    "_values.py",
+)
+
+
 def _rewriter_digest():
     """Changes whenever the code that shapes rewritten modules changes.
 
-    Cached bytecode is only valid for the rewriter that produced it; hashing
-    the sources avoids having to remember a version bump.
+    Cached bytecode is only valid for the rewriter that produced it, and for
+    the runtime it calls into (``AssertSite``, ``v``, ``m``, ``fail``);
+    hashing the sources avoids having to remember a version bump.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     digest = hashlib.sha1()
-    for name in ("_rewrite.py", "_unparse.py"):
+    for name in REWRITER_SOURCES:
         try:
             with open(os.path.join(here, name), "rb") as f:
                 digest.update(f.read())
@@ -76,22 +88,65 @@ def uninstall(hook):
         pass
 
 
+def cache_path(source_path):
+    """Where the rewritten code of ``source_path`` is cached, or None."""
+    tag = _interpreter_tag()
+    if tag is None:
+        return None
+    directory, filename = os.path.split(source_path)
+    stem = filename.rpartition(".")[0]
+    return os.path.join(
+        directory, "__pycache__", "%s.%s-%s.pyc" % (stem, tag, CACHE_TAG)
+    )
+
+
+def _interpreter_tag():
+    if PY2:
+        major, minor = sys.version_info[:2]
+        return "%s-%d%d" % (platform.python_implementation().lower(), major, minor)
+    # None where the interpreter caches no bytecode at all
+    return sys.implementation.cache_tag
+
+
+def _rewritten_code(path, read_source):
+    cache = cache_path(path)
+    code = None if cache is None else _cache.read(cache, path)
+    if code is None:
+        source = read_source()
+        code = rewrite_source(source, path)
+        if cache is not None and not sys.dont_write_bytecode:
+            _cache.write(cache, _cache.source_hash(source), code)
+    return code
+
+
+class _Selection(object):
+    """Which modules a hook rewrites; the pytest plugin brings pytest's rules."""
+
+    def wants(self, fullname):
+        """Checked before the module is located."""
+        return self.matches(fullname)
+
+    def accepts(self, fullname, filename):
+        """Checked once the module's source file is known."""
+        return True
+
+
 if not PY2:
     import importlib.machinery
-    import importlib.util
-    import marshal
 
-    class RewriteHook(object):
+    class RewriteHook(_Selection):
         def __init__(self, match):
             self.matches = _Matcher(match)
 
         def find_spec(self, fullname, path=None, target=None):
-            if not self.matches(fullname):
+            if not self.wants(fullname):
                 return None
             spec = importlib.machinery.PathFinder.find_spec(fullname, path)
             if spec is None or not isinstance(
                 spec.loader, importlib.machinery.SourceFileLoader
             ):
+                return None
+            if not self.accepts(fullname, spec.origin):
                 return None
             spec.loader = RewritingLoader(fullname, spec.origin)
             return spec
@@ -108,65 +163,15 @@ if not PY2:
 
         def get_code(self, fullname):
             path = self.get_filename(fullname)
-            st = os.stat(path)
-            cache = cache_path(path)
-            code = _read_cache(cache, st)
-            if code is None:
-                code = rewrite_source(self.get_data(path), path)
-                if not sys.dont_write_bytecode:
-                    _write_cache(cache, st, code)
-            return code
+            return _rewritten_code(path, lambda: self.get_data(path))
 
-    def cache_path(source_path):
-        directory, filename = os.path.split(source_path)
-        stem = filename.rpartition(".")[0]
-        tag = sys.implementation.cache_tag
-        return os.path.join(
-            directory, "__pycache__", "%s.%s-%s.pyc" % (stem, tag, CACHE_TAG)
-        )
-
-    def _header(st):
-        return (
-            importlib.util.MAGIC_NUMBER
-            + (0).to_bytes(4, "little")
-            + (int(st.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little")
-            + (st.st_size & 0xFFFFFFFF).to_bytes(4, "little")
-        )
-
-    def _read_cache(cache, st):
-        try:
-            with open(cache, "rb") as f:
-                data = f.read()
-        except OSError:
-            return None
-        header = _header(st)
-        if data[: len(header)] != header:
-            return None
-        try:
-            return marshal.loads(data[len(header) :])
-        except (EOFError, ValueError, TypeError):
-            return None
-
-    def _write_cache(cache, st, code):
-        data = _header(st) + marshal.dumps(code)
-        tmp = "%s.%d" % (cache, os.getpid())
-        try:
-            os.makedirs(os.path.dirname(cache), exist_ok=True)
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, cache)
-        except OSError:
-            # read-only trees just go without a cache
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+    LOADERS = (RewritingLoader,)
 
 else:
     import imp
 
-    class RewriteHook(object):
-        """PEP 302 finder and loader; Python 2 goes without a disk cache."""
+    class RewriteHook(_Selection):
+        """PEP 302 finder and loader."""
 
         def __init__(self, match):
             self.matches = _Matcher(match)
@@ -174,7 +179,7 @@ else:
             self._sources = {}
 
         def find_module(self, fullname, path=None):
-            if not self.matches(fullname):
+            if not self.wants(fullname):
                 return None
             name = fullname.rpartition(".")[2]
             try:
@@ -190,6 +195,8 @@ else:
                     return None
             elif kind != imp.PY_SOURCE:
                 return None
+            if not self.accepts(fullname, pathname):
+                return None
             self._found[fullname] = (pathname, is_package)
             return self
 
@@ -197,8 +204,7 @@ else:
             if fullname in sys.modules:
                 return sys.modules[fullname]
             pathname, is_package = self._found.pop(fullname)
-            with open(pathname, "rb") as f:
-                code = rewrite_source(f.read(), pathname)
+            code = _rewritten_code(pathname, lambda: _read(pathname))
             module = imp.new_module(fullname)
             module.__file__ = pathname
             module.__loader__ = self
@@ -220,5 +226,13 @@ else:
             return os.path.basename(self._sources[fullname]) == "__init__.py"
 
         def get_source(self, fullname):
-            with open(self._sources[fullname], "rb") as f:
-                return f.read()
+            return _read(self._sources[fullname])
+
+        def get_data(self, pathname):
+            return _read(pathname)
+
+    def _read(pathname):
+        with open(pathname, "rb") as f:
+            return f.read()
+
+    LOADERS = (RewriteHook,)
