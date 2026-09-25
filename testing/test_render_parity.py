@@ -163,3 +163,31 @@ def test_matches_pytest(expr, args):
 def test_known_divergence(expr):
     args, expected = DIVERGENT[expr]
     assert _run_cot(expr, args) == expected
+
+
+# Operands whose values reach the comparison hook; the hook stands in for
+# pytest_assertrepr_compare and shows exactly what it was passed.
+HOOK_CASES = [
+    ("x == y", ([1], [2])),
+    ("x + [9] == y", ([1], [2, 9])),
+    ("x == y + [9]", ([1, 9], [2])),
+    ("-x == y", (1, 2)),
+    ("x + 1 == y", (1, 5)),
+    ("0 < x + 1 < y", (3, 2)),
+    ("x[0] + x[1] == y", ([1, 2], 5)),
+    ("len(x) + 1 == y", ([1], 5)),
+]
+
+
+def _hook(op, left, right):
+    return "hook %r %s %r" % (left, op, right)
+
+
+@pytest.mark.parametrize("expr, args", HOOK_CASES)
+def test_comparison_hook_matches_pytest(expr, args, monkeypatch):
+    from cot_assert import _render
+    from cot_assert.pytest_plugin import PytestFormatter
+
+    monkeypatch.setattr(pytest_util, "_reprcompare", _hook)
+    monkeypatch.setattr(_render, "_formatter", PytestFormatter())
+    assert _run_cot(expr, args) == _run_pytest(expr, args)

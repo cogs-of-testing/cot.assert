@@ -25,7 +25,10 @@ host can replace with `set_formatter()`; the pytest plugin will route
 `testing/test_render_parity.py` runs every case through both rewriters and
 compares the messages, with pytest's comparison hook and config switched off.
 They match on pytest 9 and on pytest 4.6, except that pytest 4.6 names its
-own `SafeRepr` when an object's `__repr__` raises.
+own `SafeRepr` when an object's `__repr__` raises. A second set of cases
+switches a stand-in hook on, to check it is passed the same operand values
+as under pytest: a `binop` or `unary` operand passes its result, which its
+temporary already holds, not the text of the expression.
 
 ## Deliberate differences from pytest
 

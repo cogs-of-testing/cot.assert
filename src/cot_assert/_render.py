@@ -234,7 +234,7 @@ class _Explainer(object):
                 return ast.literal_eval(shape[1])
             except ValueError:
                 return _UNKNOWN
-        if kind in ("name", "repr", "attr", "call"):
+        if kind in ("name", "repr", "attr", "call", "binop", "unary"):
             return self.values.get(shape[1], _UNKNOWN)
         if kind == "compare" and shape[4] is not None:
             return self.values.get(shape[4], _UNKNOWN)
@@ -267,10 +267,10 @@ class _Explainer(object):
     def expl_method(self, obj, attr):
         return "%s.%s" % (self.expl(obj), attr)
 
-    def expl_binop(self, sym, left, right):
+    def expl_binop(self, slot, sym, left, right):
         return "(%s %s %s)" % (self.expl(left), sym, self.expl(right))
 
-    def expl_unary(self, pattern, operand):
+    def expl_unary(self, slot, pattern, operand):
         return pattern % (self.expl(operand),)
 
     def expl_call(self, slot, func, args):
