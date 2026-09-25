@@ -13,6 +13,9 @@ import os
 import sys
 import types
 
+if sys.version_info[0] > 2:
+    import importlib.util
+
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from _pytest.pathlib import fnmatch_ex
@@ -131,6 +134,9 @@ class _HookSwap(object):
         self.config.pluginmanager.rewrite_hook = new
 
 
+NEVER_REWRITTEN = _hook.STDLIB | frozenset(["pytest", "_pytest"])
+
+
 class PytestRewriteHook(_hook.RewriteHook, AssertionRewritingHook):
     """cot_assert's import hook, selecting modules by pytest's rules.
 
@@ -152,8 +158,42 @@ class PytestRewriteHook(_hook.RewriteHook, AssertionRewritingHook):
         self._marked_cache = {}
         self._basenames = set(["conftest"])
         self._session_basenames_added = False
+        self._origins = {}
         if _hook.PY2:
             _hook.RewriteHook.__init__(self, ())
+
+    if not _hook.PY2:
+        # The loader of what it rewrites is the hook itself, as with pytest's:
+        # pytest-dev/pytest#15022 tells a rewritten module by its loader.
+        # The work is the standalone hook's loader's.
+
+        def find_spec(self, fullname, path=None, target=None):
+            spec = _hook.RewriteHook.find_spec(self, fullname, path, target)
+            if spec is None:
+                return None
+            self._origins[fullname] = spec.origin
+            return importlib.util.spec_from_file_location(
+                fullname,
+                spec.origin,
+                loader=self,
+                submodule_search_locations=spec.submodule_search_locations,
+            )
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            self._loader(module.__name__).exec_module(module)
+
+        def get_resource_reader(self, name):
+            return self._loader(name).get_resource_reader(name)
+
+        def get_data(self, pathname):
+            with open(pathname, "rb") as f:
+                return f.read()
+
+        def _loader(self, name):
+            return _hook.RewritingLoader(name, self._origins[name])
 
     def set_session(self, session):
         self.session = session
@@ -161,10 +201,20 @@ class PytestRewriteHook(_hook.RewriteHook, AssertionRewritingHook):
 
     def wants(self, fullname):
         # by name alone, before the costly lookup; true when unsure
+        root = fullname.partition(".")[0]
+        if root == "cot_assert":
+            # marked as a plugin by pytest, but rewriting it would need itself
+            return False
+        if root in NEVER_REWRITTEN:
+            # string operations only, see _hook.STDLIB
+            return self._is_marked(fullname)
         if self.session is not None and not self._session_basenames_added:
             self._session_basenames_added = True
             for path in self.session._initialpaths:
-                name = os.path.basename(str(path))
+                head, name = os.path.split(str(path))
+                if name == "__init__.py":
+                    # imported under the name of its package
+                    name = os.path.basename(head)
                 self._basenames.add(os.path.splitext(name)[0])
         parts = fullname.split(".")
         if parts[-1] in self._basenames:
@@ -175,6 +225,10 @@ class PytestRewriteHook(_hook.RewriteHook, AssertionRewritingHook):
             if os.path.dirname(pattern) or fnmatch_ex(pattern, as_path):
                 return True
         return self._is_marked(fullname)
+
+    def _should_rewrite(self, name, fn, state=None):
+        # pytest-dev/pytest#15022 asks the hook this about an imported module
+        return self.accepts(name, os.fspath(fn) if hasattr(os, "fspath") else fn)
 
     def accepts(self, fullname, filename):
         if os.path.basename(filename) == "conftest.py":
@@ -203,7 +257,8 @@ class PytestRewriteHook(_hook.RewriteHook, AssertionRewritingHook):
         """Rewrite these modules and packages, and their submodules, on import."""
         for name in set(names).intersection(sys.modules):
             module = sys.modules[name]
-            if isinstance(getattr(module, "__loader__", None), _hook.LOADERS):
+            loader = getattr(module, "__loader__", None)
+            if isinstance(loader, _hook.LOADERS + (PytestRewriteHook,)):
                 continue
             doc = module.__doc__ or ""
             if any(marker in doc for marker in DONT_REWRITE):

@@ -175,6 +175,66 @@ def test_file_named_on_command_line(testdir, run_pytest):
     result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
 
 
+PYTEST_4 = int(pytest.__version__.split(".")[0]) < 5
+
+
+@pytest.mark.skipif(PYTEST_4, reason="pytest 4.6 collects no tests from __init__.py")
+def test_package_init_named_on_command_line(testdir, run_pytest):
+    # pytest-dev/pytest#15022: the name to expect is the package's, not __init__
+    testdir.mkpydir("pkg").join("__init__.py").write(KIND)
+    result = run_pytest("-s", "--cot-assert", "pkg/__init__.py")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+@pytest.mark.skipif(PYTEST_4, reason="Python 2 imports set no __spec__")
+def test_rewritten_module_is_recognised_by_its_loader(testdir, run_pytest):
+    # what pytest-dev/pytest#15022 checks after importing a test module
+    testdir.makepyfile(
+        test_loader="""
+        import sys
+
+        def test_loader():
+            names = [type(h).__name__ for h in sys.meta_path]
+            hook = sys.meta_path[names.index("PytestRewriteHook")]
+            module = sys.modules[__name__]
+            assert isinstance(module.__spec__.loader, type(hook))
+            assert hook._should_rewrite(__name__, __file__, None)
+        """
+    )
+    run_pytest("--cot-assert").assert_outcomes(passed=1)
+
+
+class _Config(object):
+    def __init__(self, python_files):
+        self.python_files = python_files
+
+    def getini(self, name):
+        assert name == "python_files"
+        return self.python_files
+
+
+@pytest.mark.parametrize("name", ["json", "os.path", "pytest", "_pytest.main"])
+def test_stdlib_and_pytest_are_never_selected(name):
+    from cot_assert.pytest_plugin import PytestRewriteHook
+
+    assert not PytestRewriteHook(_Config(["*.py"])).wants(name)
+
+
+def test_cot_assert_is_never_selected_even_marked():
+    from cot_assert.pytest_plugin import PytestRewriteHook
+
+    # pytest marks the package of every entry-point plugin, this one included
+    hook = PytestRewriteHook(_Config(["*.py"]), marked=["cot_assert"])
+    assert not hook.wants("cot_assert._cache")
+
+
+def test_marked_beats_a_stdlib_name():
+    from cot_assert.pytest_plugin import PytestRewriteHook
+
+    hook = PytestRewriteHook(_Config(["*.py"]), marked=["json"])
+    assert hook.wants("json")
+
+
 def test_assert_plain_turns_it_off(testdir, run_pytest):
     testdir.makepyfile(test_kind=KIND)
     result = run_pytest("-s", "--cot-assert", "--assert=plain")

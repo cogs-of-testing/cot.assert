@@ -13,3 +13,4 @@ dist/
 # container-side virtualenvs and pip caches from testing/containers.sh
 /.containers/
 .claude/settings.local.json
+/.hypothesis

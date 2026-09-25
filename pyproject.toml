@@ -7,7 +7,7 @@ name = "cot-assert"
 description = "assertion rewriting with a structured AssertionError, for Python 2.7, 3.x and RPython"
 readme = "README.md"
 keywords = [ "assert", "pytest", "rpython" ]
-license = "MPL-2.0"
+license = "MIT"
 license-files = [ "LICENSE" ]
 authors = [
   { name = "Ronny Pfannschmidt", email = "opensource@ronnypfannschmidt.de" },
@@ -37,6 +37,7 @@ entry-points.pytest11.cot_assert = "cot_assert.pytest_plugin"
 
 [dependency-groups]
 test = [
+  "hypothesis>=6",
   "pytest>=8.3; python_version<'3.10'",
   "pytest>=9; python_version>='3.10'",
 ]
@@ -69,6 +70,8 @@ environments = [ "python_version>='3.9'" ]
 target-version = "py37"
 line-length = 88
 src = [ "src", "testing" ]
+# vendored from pytest as it is, so that a resync stays a copy
+extend-exclude = [ "testing/test_rewrite_coverage.py" ]
 lint.select = [
   "B", # flake8-bugbear
   "E", # pycodestyle errors

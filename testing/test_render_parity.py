@@ -66,7 +66,6 @@ CASES = [
     ("sorted(x, reverse=True) == y", ([1, 2], [1, 2])),
     ("Obj(x).value == y", (1, 2)),
     ("x.value.value == 2", ("Obj(Obj(1))", None)),
-    ("x[0] == y", ([1], 2)),
     ("x == 'a' * 300", ("b", None)),
     ("x == y", (BadRepr, 1)),
     ("x == [1, 2]", ([1], None)),
@@ -74,6 +73,16 @@ CASES = [
     ("x == y, 'two\\nlines'", (1, 2)),
     ("x == y, {'msg': x}", (1, 2)),
     ("x == y, 'with %s percent'", (1, 2)),
+    ("not (x > 0 and y > 0)", (1, 2)),
+    ("not (x > 0 or y > 0)", (1, 2)),
+    ("not (x or y)", (0, 3)),
+    ("(x > 0 and y > 0) == False", (1, 2)),
+    ("(x < y) == False", (1, 2)),
+    ("abs(x > 0 and y) == 3", (1, 2)),
+    ("abs(x > 0 or y) == 3", (1, 2)),
+    ("(x or y) and x", (0, 1)),
+    ("(x or y) and x", (0, 0)),
+    ("(x or y) and (y or x) and x", (0, 1)),
 ]
 
 # Where the output differs from pytest on purpose; the reason is the value.
@@ -90,6 +99,11 @@ DIVERGENT = {
     "x == GLOBAL_LIST": (
         ([1], None),
         "assert [1] == GLOBAL_LIST",
+    ),
+    # container[key] is decomposed, as pytest-dev/pytest#14815 does
+    "x[0] == y": (
+        ([1], 2),
+        "assert 1 == 2\n +  where 1 = [1][0]",
     ),
 }
 

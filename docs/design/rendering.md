@@ -7,8 +7,9 @@ rewriter only records what the template needs, and the host builds the text
 when it is asked for (`str(exc)`, `render()`, `finalize()`):
 
 - **shape** — a tree of tuples mirroring the asserted expression: `name`,
-  `attr`, `call`, `method`, `binop`, `unary`, `compare`, `boolop`, `const`,
-  `text` and `repr` nodes. Tracked nodes refer to a *slot*.
+  `attr`, `call`, `method`, `binop`, `unary`, `subscript`, `ifexp`,
+  `compare`, `boolop`, `boolexp`, `const`, `text` and `repr` nodes. Tracked
+  nodes refer to a *slot*.
 - **paths** — one entry per failure exit: the slots evaluated on the way
   there, in the order their values are passed to `fail()`, and marks saying
   which boolean operands ran and which comparison is known to have failed.
@@ -30,12 +31,42 @@ switches a stand-in hook on, to check it is passed the same operand values
 as under pytest: a `binop` or `unary` operand passes its result, which its
 temporary already holds, not the text of the expression.
 
+`testing/test_rewrite_coverage.py` is pytest's coverage matrix for its
+rewriter, vendored from the series that ends in pytest-dev/pytest#14916 and
+run against this one; `testing/test_rewrite_fuzz.py` runs generated asserts
+both plain and rewritten and compares everything observable.
+
+## Evaluation order
+
+A rewritten assert evaluates every operand into a temporary as soon as its
+own operands are, which is Python's order, with three exceptions:
+
+- **A name** is left in place, so it is read only when the expression
+  around it is assembled. When anything evaluated before that can run code
+  (a call, an operator, an attribute, a walrus operator), the name is read
+  into a temporary first: a call can rebind it through `global` or
+  `nonlocal`, a walrus operator directly.
+- **A method** is looked up before its arguments run, as in Python; when an
+  argument can run code, the bound method goes into a temporary for that.
+  It is only called, never passed to `v()`, so RPython does not have to
+  render it.
+- **Operands of `and` and `or`** after the first run on some runs only. At
+  the top of an assert each gets its own failure exit, but only where
+  nothing is tested after them. Elsewhere, and wherever `and`/`or` is a
+  value (`not (a and b)`, `f(a or b)`), their values are appended as they
+  are evaluated to a list, `(slot, label, v(value))` each, which `fail()`
+  adds to the labels and values; slots every exit passes would read
+  temporaries that were never assigned. Temporaries cannot be preset to
+  `None` instead: RPython keeps each at one type.
+
 ## Deliberate differences from pytest
 
-- **Method calls** keep the `obj.method(...)` shape, because a bound method
-  in a temporary is a value RPython would have to annotate. The explanation
-  shows `where 1 = Obj(1).get()` where pytest adds a line for the bound
-  method.
+- **Method calls** show on one line, `where 1 = Obj(1).get()`, as
+  pytest-dev/pytest#14817 does; pytest 9 adds a line for the bound method.
+- **Subscripts** show the container and key, `where 1 = {'a': 1}['a']`, as
+  pytest-dev/pytest#14815 does; slices do not. So does the condition of a
+  conditional expression, `where 0 = (... if True else ...)`, as
+  pytest-dev/pytest#14816 does.
 - **Names not local to the function** are not tracked: under RPython they
   are mostly functions and classes. pytest shows the repr of global data;
   here the name stays. Names a function binds by `import` count as not
