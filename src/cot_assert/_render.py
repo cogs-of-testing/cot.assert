@@ -198,14 +198,21 @@ def render(exc, formatter=None):
         extra = list(zip(exc.all_labels(), values))
     else:
         slots, marks = site.paths[exc.path]
-        explained = _Explainer(formatter, dict(zip(slots, values)), set(marks))
+        # values evaluated on some runs only follow the path's own, and
+        # their labels come first among exc.labels; see _rewrite._Conditional
+        dynamic = getattr(exc, "dynamic_slots", [])
+        known = dict(zip(slots, values))
+        known.update(zip(dynamic, values[len(slots) :]))
+        explained = _Explainer(formatter, known, set(marks))
         explanation = explained.expl(site.shape)
         if exc.msg is not None:
             parts.append(formatter.format_assertmsg(exc.msg_obj))
             parts.append(">assert " + explanation)
         else:
             parts.append("assert " + explanation)
-        extra = list(zip(exc.labels, values[len(slots) :]))
+        extra = list(
+            zip(exc.labels[len(dynamic) :], values[len(slots) + len(dynamic) :])
+        )
     for label, obj in extra:
         parts.append("~%s = %s" % (label, formatter.saferepr(obj)))
     text = "\n".join(parts)
@@ -215,6 +222,19 @@ def render(exc, formatter=None):
 
 
 _UNKNOWN = object()
+
+# shapes whose own slot holds their value
+_VALUE_KINDS = (
+    "name",
+    "repr",
+    "attr",
+    "call",
+    "binop",
+    "unary",
+    "subscript",
+    "ifexp",
+    "boolexp",
+)
 
 
 class _Explainer(object):
@@ -234,7 +254,7 @@ class _Explainer(object):
                 return ast.literal_eval(shape[1])
             except ValueError:
                 return _UNKNOWN
-        if kind in ("name", "repr", "attr", "call", "binop", "unary"):
+        if kind in _VALUE_KINDS:
             return self.values.get(shape[1], _UNKNOWN)
         if kind == "compare" and shape[4] is not None:
             return self.values.get(shape[4], _UNKNOWN)
@@ -259,6 +279,22 @@ class _Explainer(object):
 
     def expl_repr(self, slot):
         return self.repr(slot)
+
+    def expl_subscript(self, slot, value, key):
+        res = self.repr(slot)
+        return "%s\n{%s = %s[%s]\n}" % (res, res, self.expl(value), self.expl(key))
+
+    def expl_ifexp(self, slot, test):
+        res = self.repr(slot)
+        return "%s\n{%s = (... if %s else ...)\n}" % (res, res, self.expl(test))
+
+    def expl_boolexp(self, slot, is_or, operands, ran):
+        # the first operand always runs; the others did if their value is known
+        expls = [self.expl(operands[0])]
+        for operand, ran_slot in zip(operands[1:], ran):
+            if ran_slot in self.values:
+                expls.append(self.expl(operand))
+        return "(" + (" or " if is_or else " and ").join(expls) + ")"
 
     def expl_attr(self, slot, value, attr):
         res = self.repr(slot)
@@ -308,4 +344,11 @@ class _Explainer(object):
             custom = self.formatter.reprcompare(sym, left_obj, right_obj)
             if custom is not None:
                 return custom
-        return "%s %s %s" % (self.expl(left), sym, self.expl(right))
+        return "%s %s %s" % (self.operand(left), sym, self.operand(right))
+
+    def operand(self, shape):
+        text = self.expl(shape)
+        if shape[0] in ("compare", "boolexp"):
+            # as pytest does, although a boolexp brings a pair of its own
+            return "(%s)" % (text,)
+        return text

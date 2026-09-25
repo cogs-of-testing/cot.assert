@@ -69,6 +69,8 @@ environments = [ "python_version>='3.9'" ]
 target-version = "py37"
 line-length = 88
 src = [ "src", "testing" ]
+# vendored from pytest as it is, so that a resync stays a copy
+extend-exclude = [ "testing/test_rewrite_coverage.py" ]
 lint.select = [
   "B", # flake8-bugbear
   "E", # pycodestyle errors

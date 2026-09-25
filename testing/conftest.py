@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import sys
 import textwrap
 
 import pytest
@@ -8,10 +9,15 @@ from cot_assert._rewrite import load_source
 
 pytest_plugins = ["pytester"]
 
+collect_ignore = []
 try:
     import rpython.rtyper  # noqa: F401
 except ImportError:
-    collect_ignore = ["translated"]
+    collect_ignore.append("translated")
+if sys.version_info[0] == 2:
+    # vendored from pytest as it is, in Python 3 syntax
+    collect_ignore.append("test_rewrite_coverage.py")
+    collect_ignore.append("test_rewrite_fuzz.py")
 
 
 @pytest.fixture
