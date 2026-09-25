@@ -37,6 +37,7 @@ entry-points.pytest11.cot_assert = "cot_assert.pytest_plugin"
 
 [dependency-groups]
 test = [
+  "hypothesis>=6",
   "pytest>=8.3; python_version<'3.10'",
   "pytest>=9; python_version>='3.10'",
 ]
