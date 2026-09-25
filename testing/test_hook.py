@@ -115,7 +115,17 @@ def test_traceback_shows_source(tree, hook):
     assert "with_source.py" in text
 
 
-@pytest.mark.skipif(PY2, reason="Python 2 has no bytecode cache for rewrites")
+def test_cache_not_written_without_bytecode(tree, hook, monkeypatch):
+    from cot_assert._hook import cache_path
+
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    path = tree("nocache_mod.py")
+    hook("nocache_mod")
+    import_module("nocache_mod")
+    assert not os.path.exists(cache_path(str(path)))
+
+
+@pytest.mark.skipif(sys.dont_write_bytecode, reason="writes no bytecode here")
 class TestCache(object):
     def cached(self, path):
         from cot_assert._hook import cache_path
@@ -173,10 +183,3 @@ class TestCache(object):
         monkeypatch.setattr(cot_assert._hook, "rewrite_source", no_rewrite)
         module = import_module("moved_mod")
         assert module.check.__code__.co_filename == str(new)
-
-    def test_not_written_without_bytecode(self, tree, hook, monkeypatch):
-        monkeypatch.setattr(sys, "dont_write_bytecode", True)
-        path = tree("nocache_mod.py")
-        hook("nocache_mod")
-        import_module("nocache_mod")
-        assert not os.path.exists(self.cached(path))

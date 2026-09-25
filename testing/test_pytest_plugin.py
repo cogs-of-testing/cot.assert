@@ -15,6 +15,33 @@ def test_kind():
 """
 
 
+def test_none_of_pytests_hook_methods_run():
+    import types
+
+    from _pytest.assertion.rewrite import AssertionRewritingHook
+
+    from cot_assert.pytest_plugin import PytestRewriteHook
+
+    for name, value in vars(AssertionRewritingHook).items():
+        if isinstance(value, types.FunctionType):
+            ours = getattr(PytestRewriteHook, name)
+            assert getattr(ours, "__module__", "").startswith("cot_assert"), name
+
+
+def test_pytests_hook_is_replaced(testdir, run_pytest):
+    testdir.makepyfile(
+        test_hooks="""
+        import sys
+
+        def test_hooks():
+            names = [type(hook).__name__ for hook in sys.meta_path]
+            print("HOOKS=%s" % ",".join(n for n in names if "Rewrit" in n))
+        """
+    )
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*HOOKS=PytestRewriteHook"])
+
+
 def test_off_by_default(testdir, run_pytest):
     testdir.makepyfile(test_kind=KIND)
     result = run_pytest("-s")
@@ -89,6 +116,69 @@ def test_conftest_is_rewritten(testdir, run_pytest):
     result = run_pytest("--cot-assert")
     result.stdout.fnmatch_lines(["E       *AnnotatedAssertion: assert 3 == 4"])
     assert result.ret == 1
+
+
+HELPER = "def check():\n    assert 1 == 2\n"
+
+USES_HELPER = """
+import helper
+
+def test_uses():
+    try:
+        helper.check()
+    except AssertionError as e:
+        print("KIND=" + type(e).__name__)
+"""
+
+
+def test_other_modules_are_not_rewritten(testdir, run_pytest):
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AssertionError*"])
+
+
+def test_register_assert_rewrite(testdir, run_pytest):
+    testdir.makeconftest("import pytest\npytest.register_assert_rewrite('helper')\n")
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_conftest_pytest_plugins_are_rewritten(testdir, run_pytest):
+    testdir.makeconftest("pytest_plugins = ['helper']\n")
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_register_after_import_warns(testdir, run_pytest):
+    testdir.makeconftest(
+        "import helper\nimport pytest\npytest.register_assert_rewrite('helper')\n"
+    )
+    testdir.makepyfile(helper=HELPER, test_uses=USES_HELPER)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(
+        ["*KIND=AssertionError*", "*Module already imported so cannot be rewritten*"]
+    )
+
+
+def test_python_files_ini(testdir, run_pytest):
+    testdir.makeini("[pytest]\npython_files = check_*.py\n")
+    testdir.makepyfile(check_kind=KIND)
+    result = run_pytest("-s", "--cot-assert")
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_file_named_on_command_line(testdir, run_pytest):
+    path = testdir.makepyfile(given=KIND)
+    result = run_pytest("-s", "--cot-assert", str(path))
+    result.stdout.fnmatch_lines(["*KIND=AnnotatedAssertion*"])
+
+
+def test_assert_plain_turns_it_off(testdir, run_pytest):
+    testdir.makepyfile(test_kind=KIND)
+    result = run_pytest("-s", "--cot-assert", "--assert=plain")
+    result.stdout.fnmatch_lines(["*KIND=AssertionError*"])
 
 
 @pytest.mark.skipif(

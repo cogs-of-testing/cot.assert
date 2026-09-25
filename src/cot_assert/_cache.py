@@ -44,14 +44,8 @@ HEADER_SIZE = len(MAGIC) + len(FLAGS) + 8
 DIGEST_MARK = "cot_assert-"
 
 
-def read_source_hash(source_path):
-    with open(source_path, "rb") as f:
-        return source_hash(f.read())
-
-
-def read(pyc, source_path, trace=None):
+def read(pyc, source_path):
     """The cached code for ``source_path``, or None when missing or stale."""
-    trace = trace or (lambda text: None)
     try:
         with open(pyc, "rb") as f:
             header = f.read(HEADER_SIZE)
@@ -59,17 +53,15 @@ def read(pyc, source_path, trace=None):
     except (IOError, OSError):
         return None
     try:
-        current = read_source_hash(source_path)
-    except (IOError, OSError) as e:
-        trace("cot_assert cache %s: %s" % (pyc, e))
+        with open(source_path, "rb") as f:
+            current = source_hash(f.read())
+    except (IOError, OSError):
         return None
     if header != MAGIC + FLAGS + current:
-        trace("cot_assert cache %s: out of date" % (pyc,))
         return None
     try:
         code = marshal.loads(data)
     except (EOFError, ValueError, TypeError):
-        trace("cot_assert cache %s: unreadable" % (pyc,))
         return None
     if not isinstance(code, types.CodeType):
         return None
@@ -79,14 +71,8 @@ def read(pyc, source_path, trace=None):
     return fix_filename(code, str(source_path))
 
 
-def write(pyc, hash_, code, trace=None):
-    """Store ``code`` under ``hash_``, of the source bytes it was built from.
-
-    Where those bytes are not at hand, a hash taken before they were read
-    will do: a source edited in between leaves a cache that no longer
-    matches, rather than one that matches the wrong code.
-    """
-    trace = trace or (lambda text: None)
+def write(pyc, hash_, code):
+    """Store ``code`` under ``hash_``, of the source bytes it was built from."""
     data = MAGIC + FLAGS + hash_ + marshal.dumps(code)
     directory = os.path.dirname(pyc)
     tmp = "%s.%d" % (pyc, os.getpid())
@@ -96,9 +82,8 @@ def write(pyc, hash_, code, trace=None):
         with open(tmp, "wb") as f:
             f.write(data)
         _replace(tmp, pyc)
-    except (IOError, OSError) as e:
+    except (IOError, OSError):
         # read-only trees just go without a cache
-        trace("cot_assert cache %s: not written: %s" % (pyc, e))
         try:
             os.unlink(tmp)
         except (IOError, OSError):

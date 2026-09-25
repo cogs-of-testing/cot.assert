@@ -28,10 +28,11 @@ cot_assert_finalize = message
 or `pytest --cot-assert`. On Python 2.7, where it runs from source, load it
 with `-p cot_assert.pytest_plugin`.
 
-pytest still decides which modules are rewritten (test files, conftests,
-`pytest.register_assert_rewrite`) and caches them under a separate name;
-cot_assert does the rewriting, and failures render through pytest's own
-comparison hooks. Failures show as `AnnotatedAssertion` instead of
+cot_assert replaces pytest's import hook. It rewrites the modules pytest
+would (test files by `python_files`, conftests, files named on the command
+line, `pytest.register_assert_rewrite`) and caches them like the standalone
+hook below, under a name of its own. Failures render through pytest's own
+comparison hooks and show as `AnnotatedAssertion` instead of
 `AssertionError`. `--assert=plain` turns rewriting off for both.
 
 ## Without pytest
