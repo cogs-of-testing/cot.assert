@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.3
+
+Cached rewrites are checked against the source's contents and follow a
+moved source, as pytest main does for its own.
+
+- A cache file holds a hash of the source instead of its mtime and size
+  (a PEP 552 checked-hash pyc). An edit that keeps the size within the same
+  second is no longer served from the cache, and a fresh checkout or a
+  restored cache no longer invalidates every file.
+- A source moved together with its `__pycache__` (a renamed directory, the
+  same tree mounted elsewhere) keeps its cache, and its code points at the
+  new path. Under pytest 4.6, which takes a conftest's `__file__` from the
+  cached code, such a tree failed with `ImportMismatchError`.
+- The rewriter digest in the cache name also covers the runtime rewritten
+  code calls into (`_runtime`, `_error`, `_values`), not only the rewriter.
+- Writing a cache file removes the ones earlier cot-assert versions left
+  for the same source and interpreter.
+- Under pytest, cot-assert replaces pytest's import hook with its own
+  instead of patching `rewrite_asserts` and `PYC_TAIL` in pytest's rewriter.
+  It selects modules by pytest's rules and shares the cache files of the
+  standalone hook, which now also caches on Python 2.
+
 ## 0.2.2
 
 - A comparison whose operand is an arithmetic or unary expression
