@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0
+
+cot-assert is now under the MIT licence, pytest's, instead of MPL-2.0.
+
+Checked against pytest's coverage matrix for its rewriter (vendored from
+the series ending in pytest-dev/pytest#14916), and against generated
+asserts run both plain and rewritten.
+
+- A name is read before later operands run when they can run code, so a
+  walrus operator or a call that rebinds it through `global` or `nonlocal`
+  no longer changes what it compared as: `assert value == f(value := 3)`
+  passed rewritten where plain Python failed.
+- A method is looked up before its arguments run, and its receiver read
+  before them: `assert obj.take(f(obj := None))` raised `AttributeError`.
+- `assert (a or b) and c` raised `UnboundLocalError` (`NameError` at module
+  level) when `a` was true and `c` false: the failure reported an operand of
+  the `or` that had not run.
+- `and`/`or` as a value (`not (a and b)`, `f(a or b)`) shows its operands,
+  as pytest does, instead of only its result; a comparison or `and`/`or`
+  compared with something is parenthesized as pytest does.
+- `container[key]` shows the container and key, and a conditional
+  expression its condition, as pytest-dev/pytest#14815 and #14816 do.
+- The pytest plugin's hook is the loader of what it rewrites and answers
+  `_should_rewrite`, which pytest-dev/pytest#15022 relies on. It rewrites
+  `pkg/__init__.py` named on the command line, and never cot-assert itself,
+  which pytest marks as a plugin.
+- Neither hook selects the standard library or pytest by a wildcard or by
+  `python_files`, and neither imports anything before ruling them out:
+  under lazy imports (PEP 810) that asked the hook about the module it was
+  importing, and failed with `ImportCycleError`. A module named explicitly,
+  or marked by `register_assert_rewrite`, is still rewritten.
+- `_runtime.fail()` takes the values evaluated on some runs only, so
+  bytecode cached by 0.2 is not used.
+
 ## 0.2.3
 
 Cached rewrites are checked against the source's contents and follow a
