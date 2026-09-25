@@ -7,20 +7,31 @@ import hashlib
 import os
 import sys
 
+from . import _cache
 from ._rewrite import rewrite_source
 
 PY2 = sys.version_info[0] == 2
 
 
+REWRITER_SOURCES = (
+    "_rewrite.py",
+    "_unparse.py",
+    "_runtime.py",
+    "_error.py",
+    "_values.py",
+)
+
+
 def _rewriter_digest():
     """Changes whenever the code that shapes rewritten modules changes.
 
-    Cached bytecode is only valid for the rewriter that produced it; hashing
-    the sources avoids having to remember a version bump.
+    Cached bytecode is only valid for the rewriter that produced it, and for
+    the runtime it calls into (``AssertSite``, ``v``, ``m``, ``fail``);
+    hashing the sources avoids having to remember a version bump.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     digest = hashlib.sha1()
-    for name in ("_rewrite.py", "_unparse.py"):
+    for name in REWRITER_SOURCES:
         try:
             with open(os.path.join(here, name), "rb") as f:
                 digest.update(f.read())
@@ -78,8 +89,6 @@ def uninstall(hook):
 
 if not PY2:
     import importlib.machinery
-    import importlib.util
-    import marshal
 
     class RewriteHook(object):
         def __init__(self, match):
@@ -108,13 +117,13 @@ if not PY2:
 
         def get_code(self, fullname):
             path = self.get_filename(fullname)
-            st = os.stat(path)
             cache = cache_path(path)
-            code = _read_cache(cache, st)
+            code = _cache.read(cache, path)
             if code is None:
-                code = rewrite_source(self.get_data(path), path)
+                source = self.get_data(path)
+                code = rewrite_source(source, path)
                 if not sys.dont_write_bytecode:
-                    _write_cache(cache, st, code)
+                    _cache.write(cache, _cache.source_hash(source), code)
             return code
 
     def cache_path(source_path):
@@ -124,43 +133,6 @@ if not PY2:
         return os.path.join(
             directory, "__pycache__", "%s.%s-%s.pyc" % (stem, tag, CACHE_TAG)
         )
-
-    def _header(st):
-        return (
-            importlib.util.MAGIC_NUMBER
-            + (0).to_bytes(4, "little")
-            + (int(st.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little")
-            + (st.st_size & 0xFFFFFFFF).to_bytes(4, "little")
-        )
-
-    def _read_cache(cache, st):
-        try:
-            with open(cache, "rb") as f:
-                data = f.read()
-        except OSError:
-            return None
-        header = _header(st)
-        if data[: len(header)] != header:
-            return None
-        try:
-            return marshal.loads(data[len(header) :])
-        except (EOFError, ValueError, TypeError):
-            return None
-
-    def _write_cache(cache, st, code):
-        data = _header(st) + marshal.dumps(code)
-        tmp = "%s.%d" % (cache, os.getpid())
-        try:
-            os.makedirs(os.path.dirname(cache), exist_ok=True)
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, cache)
-        except OSError:
-            # read-only trees just go without a cache
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
 
 else:
     import imp

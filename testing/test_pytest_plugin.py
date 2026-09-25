@@ -128,6 +128,37 @@ def test_cache_name_differs_from_pytest(testdir, run_pytest):
     assert len(theirs) == 1
 
 
+@pytest.mark.skipif(sys.dont_write_bytecode, reason="needs pytest's bytecode cache")
+def test_cache_follows_a_moved_tree(testdir, run_pytest):
+    # pytest 4.6 takes a conftest's __file__ from the cached code, and failed
+    # with ImportMismatchError when the tree was mounted elsewhere
+    before = testdir.mkdir("before")
+    before.join("conftest.py").write(
+        "import pytest\n\n@pytest.fixture\ndef two():\n    return 2\n"
+    )
+    before.join("test_moved.py").write("def test_it(two):\n    assert two == 3\n")
+    run_pytest("--cot-assert", "before").assert_outcomes(failed=1)
+    cached = [str(p) for p in before.join("__pycache__").listdir()]
+    inodes = sorted(os.stat(p).st_ino for p in cached if "cot_assert-" in p)
+    after = testdir.tmpdir.join("after")
+    before.rename(after)
+    result = run_pytest("--cot-assert", "after")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["after*test_moved.py:2: *AnnotatedAssertion"])
+    assert "before" not in result.stdout.str()
+    moved = [str(p) for p in after.join("__pycache__").listdir()]
+    assert sorted(os.stat(p).st_ino for p in moved if "cot_assert-" in p) == inodes
+
+
+def test_cache_stale_after_same_size_edit(testdir, run_pytest):
+    test = testdir.makepyfile(test_edit="def test_it():\n    assert 2 == 2\n")
+    run_pytest("--cot-assert").assert_outcomes(passed=1)
+    st = os.stat(str(test))
+    test.write(test.read().replace("2 == 2", "2 == 3"))
+    os.utime(str(test), (st.st_atime, st.st_mtime))
+    run_pytest("--cot-assert").assert_outcomes(failed=1)
+
+
 def test_non_string_message_fails_the_test(testdir, run_pytest):
     testdir.makepyfile(test_msg="def test_it():\n    assert 1 == 2, [1, 2]\n")
     result = run_pytest("--cot-assert")

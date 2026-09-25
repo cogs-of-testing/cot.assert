@@ -11,7 +11,7 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 
-from . import _hook, _render
+from . import _cache, _hook, _render
 from ._error import AnnotatedAssertion
 from ._rewrite import rewrite_asserts
 
@@ -80,6 +80,15 @@ class _PytestPatch(object):
                 pytest_rewrite.PYC_EXT, "-" + _hook.CACHE_TAG + pytest_rewrite.PYC_EXT
             ),
         )
+        # pytest checks its cache by source mtime and size; ours is checked by
+        # source hash and follows a moved source, see _cache
+        self._set(pytest_rewrite, "_read_pyc", _pytest_read_pyc)
+        self._set(
+            pytest_rewrite,
+            "_rewrite_test",
+            _hashing_rewrite_test(pytest_rewrite._rewrite_test),
+        )
+        self._set(pytest_rewrite, "_write_pyc", _pytest_write_pyc)
         self.previous_formatter = _render.set_formatter(PytestFormatter())
 
     def _set(self, obj, name, value):
@@ -110,6 +119,33 @@ class _PytestPatch(object):
 def _pytest_rewrite_asserts(mod, *args, **kwargs):
     # pytest 4.6: (mod, module_path, config); current: (mod, source, path, config)
     rewrite_asserts(mod)
+
+
+def _pytest_read_pyc(source, pyc, trace=lambda text: None):
+    return _cache.read(str(pyc), str(source), trace)
+
+
+def _hashing_rewrite_test(rewrite_test):
+    # pytest 4.6: (config, fn); current: (fn, config). Either way pytest reads
+    # the source itself, so the hash is taken before it does.
+    def _rewrite_test(*args):
+        fn = args[1] if hasattr(args[0], "getini") else args[0]
+        try:
+            hash_ = _cache.read_source_hash(str(fn))
+        except (IOError, OSError):
+            hash_ = None
+        _, co = rewrite_test(*args)
+        if co is None or hash_ is None:
+            return None, co
+        return hash_, co
+
+    return _rewrite_test
+
+
+def _pytest_write_pyc(state, co, hash_, pyc):
+    if hash_ is None:
+        return False
+    return _cache.write(str(pyc), hash_, co, state.trace)
 
 
 class PytestFormatter(_render.Formatter):
