@@ -44,18 +44,52 @@ def _rewriter_digest():
 CACHE_TAG = "cot_assert-" + _rewriter_digest()
 
 
+# Top-level names whose modules a wildcard never selects. Taken now: under
+# lazy imports (PEP 810) using even sys or fnmatch in a finder resolves an
+# import, which asks the finder again, about the very module it needs.
+def _stdlib_names():
+    names = getattr(sys, "stdlib_module_names", None)
+    if names is not None:
+        return frozenset(names)
+    # before 3.10: what the standard library directories hold
+    import sysconfig
+
+    found = set(sys.builtin_module_names)
+    # os lives in the standard library; PyPy's sysconfig names another place
+    stdlibs = set([os.path.dirname(os.__file__), sysconfig.get_paths()["stdlib"]])
+    directories = [d for s in stdlibs for d in (s, os.path.join(s, "lib-dynload"))]
+    for directory in directories:
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry in ("site-packages", "dist-packages"):
+                continue
+            found.add(entry.partition(".")[0])
+    return frozenset(found)
+
+
+STDLIB = _stdlib_names()
+
+
 class _Matcher(object):
     def __init__(self, patterns):
         self.patterns = list(patterns)
+        self.names = [p for p in self.patterns if not _is_glob(p)]
 
     def __call__(self, fullname):
-        if fullname == "cot_assert" or fullname.startswith("cot_assert."):
+        root = fullname.partition(".")[0]
+        if root == "cot_assert":
+            return False
+        # a module name selects its submodules too
+        for name in self.names:
+            if fullname == name or fullname.startswith(name + "."):
+                return True
+        if root in STDLIB:
             return False
         for pattern in self.patterns:
             if fnmatch.fnmatchcase(fullname, pattern):
-                return True
-            # a package name selects its submodules too
-            if fullname.startswith(pattern + "."):
                 return True
             # a wildcard pattern like "test_*" matches the last dotted component
             last = fullname.rpartition(".")[2]

@@ -96,6 +96,46 @@ def test_plain_name_does_not_match_last_component(tree, hook):
     assert not isinstance(exc, AnnotatedAssertion)
 
 
+def test_wildcard_skips_stdlib_names():
+    from cot_assert._hook import _Matcher
+
+    matcher = _Matcher(["*"])
+    assert not matcher("json")
+    assert not matcher("os.path")
+    assert matcher("mine")
+
+
+def test_named_stdlib_module_is_selected():
+    from cot_assert._hook import _Matcher
+
+    assert _Matcher(["json"])("json.decoder")
+
+
+LAZY_CHECK = """
+import cot_assert
+cot_assert.install(["lazy_mod"])
+import lazy_mod
+try:
+    lazy_mod.check(1)
+except AssertionError as e:
+    print("%s %s" % (type(e).__name__, e))
+"""
+
+
+def test_lazy_imports(tree, tmpdir):
+    # pytest-dev/pytest#14632: under PEP 810 a finder that imports asks
+    # itself again. Before 3.15 the flag does nothing and this is a smoke test.
+    import subprocess
+
+    tree("lazy_mod.py")
+    env = dict(os.environ, PYTHON_LAZY_IMPORTS="all")
+    env["PYTHONPATH"] = os.pathsep.join([str(tmpdir)] + sys.path)
+    out = subprocess.check_output(
+        [sys.executable, "-c", LAZY_CHECK], env=env, stderr=subprocess.STDOUT
+    )
+    assert out.decode().strip() == "AnnotatedAssertion assert 1 == 2"
+
+
 def test_uninstall_stops_rewriting(tree, hook):
     tree("after_uninstall.py")
     cot_assert.uninstall(hook("after_uninstall"))
