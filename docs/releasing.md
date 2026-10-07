@@ -22,8 +22,20 @@ optional.
 
 ## Each release
 
-1. Update `CHANGELOG.md` on `main`.
-2. Tag the commit on `main` and push the tag:
+1. Every change a user would notice adds a fragment to `changelog.d/`
+   (`changelog.d/README.md` lists the types and the bump each causes).
+2. Each push to `main` with fragments refreshes the pull request
+   "Release vX.Y.Z" from `release/main`
+   (`.github/workflows/release-proposal.yml`): the fragments rendered into
+   `CHANGELOG.md` by towncrier, the version from
+   `towncrier-fragments-zerover`. GitHub holds CI on that pull request as
+   "action required" because `GITHUB_TOKEN` opened it; approve the runs
+   from the pull request to get checks.
+3. Merging it creates the tag `vX.Y.Z` and the GitHub release on the merge
+   commit and starts `release.yml` on the tag
+   (`.github/workflows/release-tag.yml`).
 
-       git tag v0.1.0
-       git push origin v0.1.0
+Pushing a `vX.Y.Z` tag by hand still releases that commit.
+
+The proposal needs the repository setting "Allow GitHub Actions to create
+and approve pull requests" (Settings, Actions, General).

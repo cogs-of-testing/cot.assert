@@ -1,68 +1,39 @@
 # Changelog
 
-## 0.3.0
+<!-- towncrier release notes start -->
 
-cot-assert is now under the MIT licence, pytest's, instead of MPL-2.0.
+## 0.3.0 (2026-10-06)
 
-Checked against pytest's coverage matrix for its rewriter (vendored from
-the series ending in pytest-dev/pytest#14916), and against generated
-asserts run both plain and rewritten.
+### Added
 
-- A name is read before later operands run when they can run code, so a
-  walrus operator or a call that rebinds it through `global` or `nonlocal`
-  no longer changes what it compared as: `assert value == f(value := 3)`
-  passed rewritten where plain Python failed.
-- A method is looked up before its arguments run, and its receiver read
-  before them: `assert obj.take(f(obj := None))` raised `AttributeError`.
-- `assert (a or b) and c` raised `UnboundLocalError` (`NameError` at module
-  level) when `a` was true and `c` false: the failure reported an operand of
-  the `or` that had not run.
-- `and`/`or` as a value (`not (a and b)`, `f(a or b)`) shows its operands,
-  as pytest does, instead of only its result; a comparison or `and`/`or`
-  compared with something is parenthesized as pytest does.
-- `container[key]` shows the container and key, and a conditional
-  expression its condition, as pytest-dev/pytest#14815 and #14816 do.
-- The pytest plugin's hook is the loader of what it rewrites and answers
-  `_should_rewrite`, which pytest-dev/pytest#15022 relies on. It rewrites
-  `pkg/__init__.py` named on the command line, and never cot-assert itself,
-  which pytest marks as a plugin.
-- Neither hook selects the standard library or pytest by a wildcard or by
-  `python_files`, and neither imports anything before ruling them out:
-  under lazy imports (PEP 810) that asked the hook about the module it was
-  importing, and failed with `ImportCycleError`. A module named explicitly,
-  or marked by `register_assert_rewrite`, is still rewritten.
-- `_runtime.fail()` takes the values evaluated on some runs only, so
-  bytecode cached by 0.2 is not used.
-
-## 0.2.3
-
-Cached rewrites are checked against the source's contents and follow a
-moved source, as pytest main does for its own.
-
-- A cache file holds a hash of the source instead of its mtime and size
-  (a PEP 552 checked-hash pyc). An edit that keeps the size within the same
-  second is no longer served from the cache, and a fresh checkout or a
-  restored cache no longer invalidates every file.
-- A source moved together with its `__pycache__` (a renamed directory, the
-  same tree mounted elsewhere) keeps its cache, and its code points at the
-  new path. Under pytest 4.6, which takes a conftest's `__file__` from the
-  cached code, such a tree failed with `ImportMismatchError`.
-- The rewriter digest in the cache name also covers the runtime rewritten
-  code calls into (`_runtime`, `_error`, `_values`), not only the rewriter.
-- Writing a cache file removes the ones earlier cot-assert versions left
-  for the same source and interpreter.
 - Under pytest, cot-assert replaces pytest's import hook with its own
   instead of patching `rewrite_asserts` and `PYC_TAIL` in pytest's rewriter.
   It selects modules by pytest's rules and shares the cache files of the
   standalone hook, which now also caches on Python 2.
 
-## 0.2.2
+### Fixed
 
 - A comparison whose operand is an arithmetic or unary expression
   (`x + [9] == y`, `-x == y`) passes the operand's value to pytest's
   comparison hook, as pytest's rewriter does. It passed nothing, so such
   asserts showed no diff. The value was already captured; only the
   explanation dropped it, so translated code is unchanged.
+- A source moved together with its `__pycache__` (a renamed directory, the
+  same tree mounted elsewhere) keeps its cache, and its code points at the
+  new path. Under pytest 4.6, which takes a conftest's `__file__` from the
+  cached code, such a tree failed with `ImportMismatchError`.
+- Cached rewrites are checked against the source's contents, as pytest main
+  does: a cache file holds a hash of the source instead of its mtime and size
+  (a PEP 552 checked-hash pyc). An edit that keeps the size within the same
+  second is no longer served from the cache, and a fresh checkout or a
+  restored cache no longer invalidates every file.
+- The rewriter digest in the cache name also covers the runtime rewritten
+  code calls into (`_runtime`, `_error`, `_values`), not only the rewriter.
+
+### Miscellaneous
+
+- Writing a cache file removes the ones earlier cot-assert versions left
+  for the same source and interpreter.
 
 ## 0.2.1
 
