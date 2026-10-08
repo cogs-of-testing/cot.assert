@@ -105,7 +105,10 @@ def _matches(want, got):
 @pytest.mark.parametrize(
     "example", EXAMPLES, ids=[re.sub(r"\W+", "-", e.title) for e in EXAMPLES]
 )
-def test_example(example, testdir, run_pytest):
+def test_example(example, testdir, run_pytest, monkeypatch):
+    # pytest prints full diffs when it detects CI; the docs show a local run.
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("BUILD_NUMBER", raising=False)
     for name, content in example.files:
         testdir.tmpdir.join(name).write(content)
     for command, blocks in example.runs:
