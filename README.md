@@ -6,6 +6,10 @@ assertion rewriting on current pytest and on pytest 4.6.
 
 Pre-alpha.
 
+[docs/examples.md](docs/examples.md) shows what it is for and, side by
+side with pytest's output, where its failure explanations and behaviour
+differ.
+
 ```
 pip install cot-assert
 ```
