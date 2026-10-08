@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+## 0.4.1 (2026-10-08)
+
+### Documentation
+
+- Add a draft PEP for annotated assertions in the language itself, based on cot-assert's semantics.
+- `docs/examples.md` explains what cot-assert is for and shows, with pytest's
+  and cot-assert's output side by side, where they differ: method calls,
+  subscripts and conditional expressions, evaluation order, module-level
+  names, the values kept on the exception, notes, and use without pytest. A
+  test runs every example and checks the output shown.
+
 ## 0.4.0 (2026-10-07)
 
 ### Added
