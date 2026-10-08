@@ -2,6 +2,32 @@
 
 <!-- towncrier release notes start -->
 
+## 0.4.0 (2026-10-07)
+
+### Added
+
+- `and` and `or` used as a value show their operands in the explanation, as
+  pytest does, and subscripts and conditional expressions are broken down as
+  in pytest. `_runtime.fail()` takes the operands that ran as an optional
+  fifth argument. ([#4](https://github.com/cogs-of-testing/cot.assert/issues/4))
+
+### Fixed
+
+- Rewritten asserts keep Python's evaluation order: a name is read before
+  later operands that can run code, and a method is looked up, with its
+  receiver read, before its arguments run. `assert value == f(value := 3)`
+  passed where plain Python fails, names rebound through `global` or
+  `nonlocal` compared wrong, and `obj.take(f(obj := None))` raised
+  `AttributeError`. ([#4](https://github.com/cogs-of-testing/cot.assert/issues/4))
+- `assert (a or b) and c` no longer raises `UnboundLocalError` when `a` is
+  true and `c` false. ([#4](https://github.com/cogs-of-testing/cot.assert/issues/4))
+- The import hooks rule out standard library, pytest and cot-assert modules
+  by name before importing anything, so lazy imports (PEP 810) no longer
+  cycle. A wildcard or `python_files` pattern no longer selects the standard
+  library; an explicit name or a mark still does. Under pytest, a package
+  `__init__.py` named on the command line is rewritten, and cot-assert
+  itself never is. ([#4](https://github.com/cogs-of-testing/cot.assert/issues/4))
+
 ## 0.3.0 (2026-10-06)
 
 ### Added
