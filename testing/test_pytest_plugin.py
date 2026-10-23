@@ -20,7 +20,9 @@ def test_none_of_pytests_hook_methods_run():
 
     from _pytest.assertion.rewrite import AssertionRewritingHook
 
-    from cot_assert.pytest_plugin import PytestRewriteHook
+    from cot_assert.pytest_plugin import _pytest_rewrite_hook
+
+    PytestRewriteHook = _pytest_rewrite_hook()
 
     for name, value in vars(AssertionRewritingHook).items():
         if isinstance(value, types.FunctionType):
@@ -215,13 +217,17 @@ class _Config(object):
 
 @pytest.mark.parametrize("name", ["json", "os.path", "pytest", "_pytest.main"])
 def test_stdlib_and_pytest_are_never_selected(name):
-    from cot_assert.pytest_plugin import PytestRewriteHook
+    from cot_assert.pytest_plugin import _pytest_rewrite_hook
+
+    PytestRewriteHook = _pytest_rewrite_hook()
 
     assert not PytestRewriteHook(_Config(["*.py"])).wants(name)
 
 
 def test_cot_assert_is_never_selected_even_marked():
-    from cot_assert.pytest_plugin import PytestRewriteHook
+    from cot_assert.pytest_plugin import _pytest_rewrite_hook
+
+    PytestRewriteHook = _pytest_rewrite_hook()
 
     # pytest marks the package of every entry-point plugin, this one included
     hook = PytestRewriteHook(_Config(["*.py"]), marked=["cot_assert"])
@@ -229,7 +235,9 @@ def test_cot_assert_is_never_selected_even_marked():
 
 
 def test_marked_beats_a_stdlib_name():
-    from cot_assert.pytest_plugin import PytestRewriteHook
+    from cot_assert.pytest_plugin import _pytest_rewrite_hook
+
+    PytestRewriteHook = _pytest_rewrite_hook()
 
     hook = PytestRewriteHook(_Config(["*.py"]), marked=["json"])
     assert hook.wants("json")
